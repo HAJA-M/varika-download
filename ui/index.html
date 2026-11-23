@@ -2,7 +2,8 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0b">
 <title>Varika Download</title>
 <style>
 :root{
@@ -223,10 +224,81 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .stats{display:none}
   .search{width:160px}
 }
+/* vitesse et temps restant dans la ligne quand la colonne de droite disparaît */
+.meta .msp{display:none;color:var(--text);font-variant-numeric:tabular-nums}
+@media (max-width:1040px){ .meta .msp{display:inline} }
+
+/* ---------- différences Windows / Android ---------- */
+.android-only{display:none !important}
+body.android .android-only{display:flex !important}
+body.android p.android-only{display:block !important}
+body.android .desktop-only{display:none !important}
+
+/* ---------- tablette et mobile : menu latéral escamotable ---------- */
+.mobile-head{display:none}
+.scrim{display:none}
+@media (max-width:900px){
+  .app{grid-template-columns:1fr}
+  .sidebar{position:fixed;top:0;bottom:0;left:0;width:min(300px,86vw);z-index:40;transform:translateX(-102%);
+    transition:transform .22s ease;box-shadow:20px 0 60px rgba(0,0,0,.5);
+    padding-top:calc(18px + env(safe-area-inset-top));padding-bottom:calc(14px + env(safe-area-inset-bottom))}
+  .app.nav-open .sidebar{transform:none}
+  .scrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:39;opacity:0;pointer-events:none;transition:opacity .2s}
+  .app.nav-open .scrim{opacity:1;pointer-events:auto}
+  .mobile-head{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .mobile-head .brand-mini{display:flex;align-items:center;gap:9px;font-weight:650;font-size:16px;flex:1;min-width:0}
+  .mobile-head .brand-mini svg{width:28px;height:28px;flex:none}
+  .mobile-head .mh-speed{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .icon-btn.lg{width:40px;height:40px;border-radius:11px}
+  .icon-btn.lg svg{width:20px;height:20px}
+  .topbar{padding:calc(14px + env(safe-area-inset-top)) 18px 0}
+  .toolbar{padding:18px 18px 10px}
+  .list{padding:4px 18px calc(24px + env(safe-area-inset-bottom))}
+  .empty{inset:220px 18px 18px}
+  .meta{flex-wrap:wrap;white-space:normal;row-gap:2px}
+}
+
+/* ---------- téléphone ---------- */
+@media (max-width:640px){
+  html,body{font-size:15px}
+  .add-box{flex-wrap:wrap;padding:8px;gap:8px;border-radius:14px}
+  .add-box>svg{display:none}
+  .add-box input{flex:1 1 100%;order:-1;padding:10px 8px;font-size:16px}  /* 16px : pas de zoom auto sur mobile */
+  .conn-chip{height:44px}
+  .add-box .btn.primary{flex:1;height:44px;justify-content:center}
+  .clip{flex-wrap:wrap}
+  .clip span{flex-basis:100%;order:2}
+  .toolbar{flex-wrap:wrap;gap:10px}
+  .toolbar h1{font-size:18px}
+  .tools{width:100%}
+  .search{flex:1;width:auto;height:40px}
+  .tools .btn.ghost{height:40px;width:40px;padding:0;justify-content:center}
+  .item{grid-template-columns:42px minmax(0,1fr);gap:10px 12px;padding:12px}
+  .ficon{width:42px;height:42px}
+  .actions{grid-column:1 / -1;justify-content:flex-end;border-top:1px solid var(--border);padding-top:8px;gap:6px}
+  .act{width:44px;height:40px}
+  .row1{flex-wrap:wrap;row-gap:4px}
+  .name{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3}
+  .meta{flex-wrap:wrap;white-space:normal;row-gap:2px}
+  .empty{inset:300px 18px 18px}
+  .empty svg{width:90px;height:90px}
+  /* fenêtres : panneau qui monte du bas */
+  .modal{align-items:flex-end}
+  .dialog,.dialog.wide{width:100%;max-width:100%;border-radius:20px 20px 0 0;max-height:92vh;
+    padding-bottom:env(safe-area-inset-bottom);animation:sheet .25s ease}
+  @keyframes sheet{from{transform:translateY(40px);opacity:0}}
+  .feature-list{grid-template-columns:1fr}
+  .tabs button{font-size:12px}
+  #toasts{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom))}
+  .toast{min-width:0;max-width:none}
+  .dropzone div{padding:32px 24px;margin:16px}
+}
+@media (hover:none){ .item:hover{background:var(--surface);border-color:var(--border)} }
 </style>
 </head>
 <body>
-<div class="app">
+<div class="app" id="app">
+  <div class="scrim" id="scrim"></div>
   <aside class="sidebar">
     <div class="brand">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#BFFE6F"/><g transform="translate(0 -22)"><path d="M145 182 H193 L256 318.5 L318 182 H366 L278 405 L269 414 H242 L233 405 Z" fill="#0A0B0A" stroke="#0A0B0A" stroke-width="3" stroke-linejoin="round"/><circle cx="255.5" cy="144" r="43.5" fill="#0A0B0A"/><path d="M237.5 146 L250 158.5 L274.5 132" fill="none" stroke="#BFFE6F" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M189 421 V447 H322 V421" fill="none" stroke="#0A0B0A" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
@@ -238,12 +310,18 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
       <canvas id="spark"></canvas>
       <div class="disk"><span id="activeCount">Aucun actif</span><span id="disk"></span></div>
     </div>
-    <button class="side-btn" id="btnExt"><span data-icon="puzzle"></span>Extension navigateur<i class="ext-dot" id="extDot"></i></button>
+    <button class="side-btn android-only" id="btnBrowser"><span data-icon="globe"></span>Navigateur vidéo</button>
+    <button class="side-btn desktop-only" id="btnExt"><span data-icon="puzzle"></span>Extension navigateur<i class="ext-dot" id="extDot"></i></button>
     <button class="side-btn" id="btnSettings" style="margin-top:6px"><span data-icon="settings"></span>Paramètres</button>
   </aside>
 
   <main>
     <header class="topbar">
+      <div class="mobile-head">
+        <button class="icon-btn lg" id="menuBtn" title="Menu" aria-label="Ouvrir le menu"><span data-icon="menu"></span></button>
+        <div class="brand-mini"><svg viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#BFFE6F"/><g transform="translate(0 -22)"><path d="M145 182 H193 L256 318.5 L318 182 H366 L278 405 L269 414 H242 L233 405 Z" fill="#0A0B0A"/><circle cx="255.5" cy="144" r="43.5" fill="#0A0B0A"/><path d="M237.5 146 L250 158.5 L274.5 132" fill="none" stroke="#BFFE6F" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M189 421 V447 H322 V421" fill="none" stroke="#0A0B0A" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/></g></svg><span>Varika Download</span></div>
+        <span class="mh-speed" id="mhSpeed"></span>
+      </div>
       <div class="add-box">
         <span data-icon="link"></span>
         <input id="url" placeholder="Collez un lien de téléchargement (ou glissez-le dans la fenêtre)…" spellcheck="false" autocomplete="off">
@@ -286,7 +364,7 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   <div class="dialog">
     <header><h3>Paramètres</h3><button class="icon-btn" data-close><span data-icon="x"></span></button></header>
     <div class="body">
-      <div class="field">
+      <div class="field desktop-only">
         <label>Dossier de destination</label>
         <div class="path-row"><input id="setDest" spellcheck="false"><button class="btn ghost" id="browse"><span data-icon="folder"></span>Parcourir</button></div>
       </div>
@@ -299,7 +377,8 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
         <label>Téléchargements simultanés <b id="setParVal">3</b></label>
         <input type="range" id="setPar" min="1" max="8">
       </div>
-      <label class="check" style="accent-color:var(--accent)"><input type="checkbox" id="setShow" style="accent-color:var(--accent)"> Afficher la fenêtre quand un téléchargement arrive du navigateur</label>
+      <p class="hint android-only">Les fichiers sont enregistrés dans <b>Téléchargements/Varika Download</b> et apparaissent dans l'application Fichiers du téléphone.</p>
+      <label class="check desktop-only" style="accent-color:var(--accent)"><input type="checkbox" id="setShow" style="accent-color:var(--accent)"> Afficher la fenêtre quand un téléchargement arrive du navigateur</label>
     </div>
     <footer><span class="hint" id="version" style="margin-right:auto;align-self:center"></span><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="saveSettings">Enregistrer</button></footer>
   </div>
@@ -361,6 +440,8 @@ const I = {
   settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
   x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+  globe:'<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 3.6 5.4 3.6 8.5s-1.1 5.9-3.6 8.5c-2.5-2.6-3.6-5.4-3.6-8.5s1.1-5.9 3.6-8.5z"/>',
   clipboard:'<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5h5v3h-5z"/>',
   broom:'<path d="M14 4 10 12M7 13h7l2 7H5z"/>',
   puzzle:'<path d="M9.5 4.5a2 2 0 1 1 4 0V6H17a1 1 0 0 1 1 1v3.5h1.5a2 2 0 1 1 0 4H18V18a1 1 0 0 1-1 1h-3.5v-1.5a2 2 0 1 0-4 0V19H6a1 1 0 0 1-1-1v-3.5h1.5a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h3.5z"/>',
@@ -438,6 +519,7 @@ function buildNav(){
   $('#nav').innerHTML = h;
   $('#nav').addEventListener('click', (e) => {
     const b = e.target.closest('.nav-btn'); if (!b) return;
+    closeNav();
     if (b.dataset.filter) { filter = b.dataset.filter; cat = null; }
     else { cat = cat === b.dataset.cat ? null : b.dataset.cat; filter = 'all'; }
     render();
@@ -498,6 +580,8 @@ function updateRow(el, it){
   if (it.status === 'downloading') parts.push(it.kind === 'hls' ? `${it.active} segment${it.active > 1 ? 's' : ''} en parallèle`
     : it.resumable ? `${it.active} connexion${it.active > 1 ? 's' : ''}` : '1 connexion · pas de reprise');
   if (it.note) parts.push(`<span class="err" style="color:var(--warn)">${esc(it.note)}</span>`);
+  if (it.status === 'downloading' && it.speed > 0)
+    parts.push(`<span class="msp">${fmtSize(it.speed)}/s${it.eta != null ? ' · ' + fmtTime(it.eta) : ''}</span>`);
   if (it.status === 'error' && it.error) parts.push(`<span class="err">${esc(it.error)}</span>`);
   const meta = parts.join('<span class="dot">•</span>');
   setIf(el, 'meta', v => q('.meta').innerHTML = v, meta);
@@ -552,6 +636,7 @@ function render(){
 
   // débit total + graphique
   $('#totalSpeed').textContent = fmtSize(state.totalSpeed) + '/s';
+  $('#mhSpeed').textContent = state.totalSpeed > 0 ? fmtSize(state.totalSpeed) + '/s' : '';
   const act = items.filter(i => i.status === 'downloading').length;
   $('#activeCount').textContent = act ? `${act} actif${act > 1 ? 's' : ''}` : 'Aucun actif';
   drawSpark();
@@ -608,7 +693,10 @@ async function refresh(){
 async function addUrl(url){
   url = (url || '').trim();
   if (!url) { $('#url').focus(); return; }
-  const r = await api.add(url, Number($('#conn').value));
+  let r;
+  try { r = await api.add(url, Number($('#conn').value)); }
+  catch (e) { toast('Ajout impossible', String(e && e.message || e), 'err'); return; }
+  if (!r.ok && r.openBrowser) { toast('Page web détectée', 'Ouverture dans le navigateur vidéo pour trouver le fichier…'); $('#url').value = ''; return; }
   if (!r.ok) { toast('Lien invalide', r.error, 'err'); return; }
   $('#url').value = '';
   if (url === lastClip) $('#clip').hidden = true;
@@ -626,7 +714,21 @@ async function checkClipboard(){
 function openModal(id){ $(id).classList.add('on'); }
 function closeModals(){ document.querySelectorAll('.modal.on').forEach(m => m.classList.remove('on')); }
 
+// texte d'aide plus court sur petit écran
+const mq = matchMedia('(max-width:640px)');
+const setPlaceholder = () => { const u = document.getElementById('url'); if (u) u.placeholder = mq.matches ? 'Collez un lien de téléchargement' : 'Collez un lien de téléchargement (ou glissez-le dans la fenêtre)…'; };
+mq.addEventListener ? mq.addEventListener('change', setPlaceholder) : mq.addListener(setPlaceholder);
+setPlaceholder();
+function openNav(){ $('#app').classList.add('nav-open'); }
+function closeNav(){ $('#app').classList.remove('nav-open'); }
 function bind(){
+  $('#menuBtn').onclick = openNav;
+  $('#scrim').onclick = closeNav;
+  // balayage vers la gauche pour refermer le menu
+  let sx = null;
+  $('.sidebar').addEventListener('touchstart', e => { sx = e.touches[0].clientX; }, {passive:true});
+  $('.sidebar').addEventListener('touchend', e => { if (sx != null && e.changedTouches[0].clientX - sx < -60) closeNav(); sx = null; }, {passive:true});
+  ['#btnExt', '#btnSettings'].forEach(id => $(id).addEventListener('click', closeNav));
   $('#btnAdd').onclick = () => addUrl($('#url').value);
   $('#url').addEventListener('keydown', e => { if (e.key === 'Enter') addUrl($('#url').value); });
   $('#clipUse').onclick = () => addUrl(lastClip);
@@ -678,12 +780,13 @@ function bind(){
   $('#browse').onclick = async () => { const p = await api.choose_folder(); if (p) $('#setDest').value = p; };
   $('#saveSettings').onclick = async () => {
     const s = await api.save_settings({dest: $('#setDest').value.trim(), connections: Number($('#setConn').value), max_parallel: Number($('#setPar').value), show_on_add: $('#setShow').checked});
+    if (s.error) { toast('Paramètres non enregistrés', s.error, 'err'); return; }
     $('#conn').value = s.connections; closeModals(); toast('Paramètres enregistrés', s.dest); refresh(); updateDisk();
   };
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
   document.querySelectorAll('.modal').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) closeModals(); }));
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeModals();
+    if (e.key === 'Escape') { closeModals(); closeNav(); }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); $('#url').focus(); }
   });
 
@@ -739,6 +842,8 @@ async function updateDisk(){
 async function start(a){
   if (api) return;
   api = a;
+  if (window.VarikaAndroid) document.body.classList.add('android');
+  if ($('#btnBrowser')) $('#btnBrowser').onclick = () => { closeNav(); api.open_browser(''); };
   let opts = ''; for (let i = 1; i <= 32; i++) opts += `<option value="${i}">${i}</option>`;
   $('#conn').innerHTML = opts;
   buildNav(); bind();
@@ -800,7 +905,7 @@ class DemoApi {
       segments: it.status === 'completed' ? [] : it.segs.map(s => s.slice()), added:it.added, kind: it.kind, variant: it.variant};
   }
   async get_state(){ this.step(); const items = this.items.map(i => this.view(i));
-    return {items, totalSpeed: items.reduce((a, i) => a + (i.speed || 0), 0), settings:this.s, version:'1.1.0 (démo)',
+    return {items, totalSpeed: items.reduce((a, i) => a + (i.speed || 0), 0), settings:this.s, version:'1.3.0 (démo)',
       extension:{connected:true, lastSeen:Date.now()/1000 - 120, browser:'Chrome', server:true, port:47821, folder:'C:\\Users\\Vous\\AppData\\Roaming\\Varika Download\\extension'}}; }
   async add(url, n){ if (!/^https?:\/\//i.test(url)) return {ok:false, error:'Le lien doit commencer par http:// ou https://'};
     const f = decodeURIComponent(url.split('?')[0].split('/').pop() || 'telechargement');
@@ -823,9 +928,29 @@ class DemoApi {
   async open_browser_extensions(b){ return BROWSERS[b].url; }
 }
 
+/* ======================= application Android ======================= */
+// Le moteur Java expose window.VarikaAndroid : méthodes synchrones qui prennent et renvoient du texte (JSON).
+function androidApi(){
+  const A = window.VarikaAndroid;
+  const arg = (x) => x === undefined || x === null ? '' : typeof x === 'object' ? JSON.stringify(x) : String(x);
+  return new Proxy({}, { get: (_, name) => (...args) => new Promise((resolve, reject) => {
+    try { const r = A[name](...args.map(arg)); resolve(r === undefined || r === null || r === '' ? null : JSON.parse(r)); }
+    catch (e) { reject(e); }
+  }) });
+}
+// Bouton « retour » du téléphone : ferme d'abord une fenêtre ou le menu
+window.varikaBack = () => {
+  if (document.querySelector('.modal.on')) { closeModals(); return true; }
+  if ($('#app').classList.contains('nav-open')) { closeNav(); return true; }
+  return false;
+};
+// Lien partagé vers l'application (appelé par Android)
+window.varikaShared = (msg) => { refresh(); if (msg) toast(msg.title || 'Varika Download', msg.text || '', msg.type || 'info'); };
+if (window.VarikaAndroid) start(androidApi());
+
 window.addEventListener('pywebviewready', () => start(window.pywebview.api));
 if (window.pywebview && window.pywebview.api && window.pywebview.api.get_state) start(window.pywebview.api);
-const demo = new URLSearchParams(location.search).has('demo') || location.protocol === 'file:';
+const demo = !window.VarikaAndroid && (new URLSearchParams(location.search).has('demo') || location.protocol === 'file:');
 if (demo) setTimeout(() => { if (!api) { document.body.insertAdjacentHTML('beforeend', '<div class="demo">Aperçu de démonstration</div>'); start(new DemoApi()); } }, 1500);
 </script>
 </body>

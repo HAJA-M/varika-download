@@ -55,6 +55,24 @@ Diagnostic : dans `chrome://extensions`, clique sur « service worker » sous Va
 - **ffmpeg (recommandé)** : s'il est trouvé (dans le PATH, ou `ffmpeg.exe` à côté de `VarikaDownload.exe`), le résultat est un **.mp4** et la piste audio séparée est fusionnée. Sans ffmpeg, on obtient un **.ts** lisible par VLC. Pour l'installer : `winget install Gyan.FFmpeg`.
 - **Limites volontaires** : aucun contournement de DRM (Netflix, Disney+, Widevine, SAMPLE-AES : refusé avec un message), pas de YouTube (conditions du site et règles du Chrome Web Store), pas de diffusion en direct. Les flux DASH (`.mpd`) ne sont pas encore pris en charge.
 
+## Application Android (dossier `android/`)
+La même interface que sur Windows, avec un moteur réécrit en Java, sans aucune bibliothèque externe.
+
+**Obtenir l'APK**
+- **GitHub Actions** : workflow **Build Android**, bouton **Run workflow**. L'APK `VarikaDownload-1.3.0-test.apk` se télécharge dans *Artifacts*. Pour produire un APK de production signé, ajoute dans *Settings > Secrets* les secrets `VARIKA_KEYSTORE_B64` (ton fichier .jks encodé en base64), `VARIKA_KEYSTORE_PASSWORD`, `VARIKA_KEY_ALIAS` et `VARIKA_KEY_PASSWORD`.
+- **Android Studio** : *Open* sur le dossier `android/`, accepte la création du Gradle wrapper, puis *Build > Build APK(s)*.
+
+**Installation sur le téléphone** : Android 10 ou plus récent. Ouvre l'APK et autorise « Installer des applications inconnues » pour le gestionnaire de fichiers ou le navigateur utilisé.
+
+**Fonctions**
+- Coller un lien, ou bien **Partager → Varika Download** depuis Chrome, WhatsApp, Telegram… Si le lien mène à une page web plutôt qu'à un fichier, la page s'ouvre dans le navigateur vidéo.
+- **Navigateur vidéo** : il observe les requêtes de la page et repère les MP4, WebM et flux HLS. Le bouton « Télécharger la vidéo » envoie la vidéo avec les cookies du site. YouTube est exclu.
+- Téléchargements en arrière-plan avec une notification de progression et un bouton « Tout suspendre ».
+- Les fichiers terminés vont dans **Téléchargements/Varika Download** et apparaissent dans l'application Fichiers.
+- Les vidéos HLS sont converties en `.mp4` avec les outils intégrés d'Android (MediaMuxer), avec repli sur `.ts`.
+
+**Structure** : `core/` contient le moteur (pur Java, testé sur ordinateur par `tests/test_android_core.py`). Le reste est propre à Android : `MainActivity` (interface et pont JavaScript), `BrowserActivity`, `DownloadService`, `Publisher` et `MediaRemuxer`.
+
 ## Lancer sans compiler (développement)
 ```bash
 pip install pywebview
@@ -84,7 +102,9 @@ Pour avoir un aperçu du design dans un navigateur, ouvre `ui/index.html` : il d
 | `bridge.py` | Pont navigateur : serveur local sécurisé, protocole `varika://`, instance unique |
 | `hls.py` | Téléchargement des vidéos en streaming HLS (.m3u8) |
 | `extension/` | Extension Chromium (Manifest V3) : capture, clic droit, détection vidéo (`content.js`), popup |
-| `tests/` | Serveur local bridé et tests de bout en bout (`test_moteur.py`, `test_hls.py` ; `test_extension.py` et `test_video.py` avec Playwright) |
+| `android/` | Application Android (moteur Java dans `core/`, écrans et service Android) |
+| `RAPPORT-ANALYSE.md` | Analyse du code : bugs trouvés, corrections, tests |
+| `tests/` | Serveur local bridé et tests de bout en bout (`test_moteur.py`, `test_bugs.py`, `test_hls.py`, `test_android_core.py` ; `test_extension.py` et `test_video.py` avec Playwright) |
 | `build_windows.bat`, `version_info.txt`, `installer.iss`, `.github/workflows/` | Compilation et installateur |
 
 ## Comment fonctionne le moteur

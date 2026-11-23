@@ -1,6 +1,6 @@
 ; Installateur Windows (Inno Setup 6) : compile dist\VarikaDownload.exe en Setup-VarikaDownload-1.0.0.exe
 #define AppName "Varika Download"
-#define AppVersion "1.2.0"
+#define AppVersion "1.3.0"
 
 [Setup]
 AppId={{DB0A047E-9259-456D-9217-0483B23BCCB1}

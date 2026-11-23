@@ -12,11 +12,21 @@ import os
 import sys
 import time
 
+import urllib.parse
+
 from engine import COMPLETED, ERROR, Download, human_size, human_time
+from hls import HlsDownload
+
+
+def make_download(url, out, connections):
+    """C1 : un lien .m3u8 est une vidéo en streaming, le reste un fichier classique."""
+    if urllib.parse.urlparse(url).path.lower().endswith((".m3u8", ".m3u")):
+        return HlsDownload(url, out, connections)
+    return Download(url, out, connections)
 
 
 def cli(url, connections, out):
-    d = Download(url, out, connections)
+    d = make_download(url, out, connections)
     d.start()
     try:
         while d.is_running:

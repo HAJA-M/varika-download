@@ -69,6 +69,9 @@ class _Handler(BaseHTTPRequestHandler):
           ne peut pas ajouter d'en-tête personnalisé sans pré-vérification CORS, que l'on
           refuse) ou le jeton local (2e instance du logiciel).
         """
+        # X47 : protection contre le « DNS rebinding » (un site qui se fait passer pour 127.0.0.1)
+        if (self.headers.get("Host") or "").lower() not in (f"127.0.0.1:{PORT}", f"localhost:{PORT}"):
+            return False
         o = self._origin()
         if o:
             return o.startswith(EXT_ORIGINS)
@@ -153,13 +156,23 @@ def start_server(api, token):
 
 def forward_to_running(token, urls):
     """Instance unique : si Varika Download tourne déjà, lui transmettre les liens."""
-    def post(path, data):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # jamais via un proxy
+
+    def post(path, data, timeout=40):
         req = urllib.request.Request(
             f"http://127.0.0.1:{PORT}{path}", data=json.dumps(data).encode(),
             headers={"Content-Type": "application/json", "X-Varika-Token": token}, method="POST")
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # jamais via un proxy
-        with opener.open(req, timeout=40) as r:
+        with opener.open(req, timeout=timeout) as r:
             return json.loads(r.read() or b"{}")
+    try:
+        # A40 : vérification rapide d'abord, pour ne pas bloquer le démarrage si le port
+        # est occupé par un autre logiciel qui ne répond pas
+        req = urllib.request.Request(f"http://127.0.0.1:{PORT}/ping", headers={"X-Varika-Token": token})
+        with opener.open(req, timeout=2) as r:
+            if json.loads(r.read() or b"{}").get("app") != "Varika Download":
+                return False
+    except (OSError, ValueError):
+        return False
     try:
         for u in urls:
             post("/add", u)

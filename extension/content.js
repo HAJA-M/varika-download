@@ -149,6 +149,12 @@
     setTimeout(() => hide(true), 2200);
   }
 
+  // E1 : le panneau se ferme par un clic ailleurs ou la touche Échap
+  document.addEventListener('mousedown', (e) => {
+    if (panelOpen && host && !e.composedPath().includes(host)) hide(true);
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && panelOpen) hide(true); }, true);
+
   // Survol (même si une couche transparente du lecteur recouvre la vidéo)
   let raf = 0;
   document.addEventListener('mousemove', (e) => {

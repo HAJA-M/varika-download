@@ -135,6 +135,7 @@ function shouldIntercept(item, s) {
 const seen = new Set();
 
 async function takeOver(item) {
+  if (seen.size > 500) seen.clear();                     // E3 : mémoire bornée
   if (seen.has(item.id) || item.state !== 'in_progress') return;
   const s = await getSettings();
   if (seen.has(item.id)) return;
@@ -250,7 +251,8 @@ async function saveTab(tabId) {
   const list = [...(media.get(tabId) || new Map()).values()];
   await chrome.storage.session.set({ ['media:' + tabId]: list }).catch(() => {});
   const shown = visibleMedia(list).length;
-  chrome.action.setBadgeText({ tabId, text: shown ? String(shown) : '' }).catch(() => {});
+  const { enabled } = await getSettings();               // E12 : « OFF » reste visible si la capture est coupée
+  chrome.action.setBadgeText({ tabId, text: !enabled ? 'OFF' : shown ? String(shown) : '' }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ tabId, color: '#7ACC2E' }).catch(() => {});
 }
 

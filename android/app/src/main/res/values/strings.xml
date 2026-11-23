@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Varika Download</string>
+    <string name="share_label">Télécharger avec Varika</string>
+    <string name="ch_progress">Téléchargements en cours</string>
+    <string name="ch_done">Téléchargements terminés</string>
+    <string name="notif_one">Téléchargement en cours</string>
+    <string name="notif_many">%1$d téléchargements en cours</string>
+    <string name="notif_done">Téléchargement terminé</string>
+    <string name="pause_all">Tout suspendre</string>
+    <string name="close">Fermer</string>
+    <string name="browser_hint">Adresse ou recherche</string>
+    <string name="download_video">⬇ Télécharger la vidéo</string>
+    <string name="download_n">⬇ %1$d médias détectés</string>
+    <string name="choose_media">Choisir le média</string>
+    <string name="sending">Envoi à Varika Download…</string>
+    <string name="added">Ajouté : %1$s</string>
+    <string name="failed">Échec : %1$s</string>
+    <string name="youtube_blocked">YouTube n\'est pas pris en charge : ses conditions d\'utilisation interdisent le téléchargement. Utilisez l\'option hors connexion de l\'application YouTube.</string>
+</resources>

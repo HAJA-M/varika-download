@@ -27,7 +27,9 @@ import urllib.parse
 import urllib.request
 
 from engine import (COMPLETED, DOWNLOADING, ERROR, MAX_RETRIES, PAUSED, PROBING,
-                    QUEUED, TIMEOUT, UA, _safe_name, _unique_path)
+                    QUEUED, UA, _safe_name, check_free_space, claim_path, http_open, release_path)
+
+MAX_SEGMENT = 256 * 1024 * 1024     # garde-fou mémoire : un « segment » plus gros est suspect
 
 try:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -100,7 +102,9 @@ def parse_playlist(text, base_url):
                 pending_range = None
             segs.append({"url": join(l), "key": key, "seq": seq + len(segs), "range": rng})
     if not segs:
-        raise ValueError("playlist vide (diffusion en direct non prise en charge)")
+        raise ValueError("playlist vide")
+    if "#EXT-X-ENDLIST" not in lines and not any(l.startswith("#EXT-X-PLAYLIST-TYPE:VOD") for l in lines):
+        raise ValueError("diffusion en direct : non prise en charge (seules les vidéos complètes se téléchargent)")
     return {"type": "media", "segments": segs, "init": init}
 
 
@@ -240,18 +244,25 @@ class HlsDownload:
         shutil.rmtree(self.part, ignore_errors=True)
         if delete_final and os.path.isfile(self.path):
             os.remove(self.path)
+        release_path(self.path)
 
     # -------------------------------------------------------- réseau
-    def _h(self, extra=None):
+    def _h(self, extra=None, url=None):
         h = {"User-Agent": UA}
         h.update(self.headers)
+        # les cookies ne partent que vers le site de la playlist, jamais vers un autre
+        if urllib.parse.urlparse(url or self.url).hostname != urllib.parse.urlparse(self.url).hostname:
+            h = {k: v for k, v in h.items() if k.lower() not in ("cookie", "authorization")}
         h.update(extra or {})
         return h
 
-    def _get(self, url, extra=None, limit=None):
-        req = urllib.request.Request(url, headers=self._h(extra))
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            return r.read() if limit is None else r.read(limit), r.geturl()
+    def _get(self, url, extra=None, limit=MAX_SEGMENT):
+        req = urllib.request.Request(url, headers=self._h(extra, url))
+        with http_open(req) as r:
+            data = r.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError("réponse anormalement grosse : téléchargement arrêté")
+            return data, r.geturl()
 
     def _playlist(self, url):
         data, final = self._get(url, limit=8 * 1024 * 1024)
@@ -303,10 +314,12 @@ class HlsDownload:
                 self.probe()
             if not self.path:
                 os.makedirs(self.dest_dir, exist_ok=True)
-                self.path = _unique_path(os.path.join(self.dest_dir, self.filename))
+                self.path = claim_path(os.path.join(self.dest_dir, self.filename), self)
                 self.filename = os.path.basename(self.path)
             os.makedirs(self.part, exist_ok=True)
             self._scan_done()
+            if self.total and self._done:
+                check_free_space(self.dest_dir, (self.total - self._bytes) * 2)   # segments + fichier final
             self.status = DOWNLOADING
             self._run_workers()
             if self._fatal:
@@ -323,6 +336,8 @@ class HlsDownload:
         finally:
             self.speed, self.active = 0.0, 0
             self._probed = False           # au prochain départ, on relit la playlist
+            if self.status in (COMPLETED, ERROR):
+                release_path(self.path)
 
     def _seg_file(self, track, i):
         return os.path.join(self.part, f"{track}{i:06d}.seg")
@@ -454,6 +469,9 @@ class HlsDownload:
             audio = os.path.join(self.part, "audio" + aext)
             self._concat("a", audio)
 
+        if os.path.exists(self.path):        # un fichier de ce nom est apparu entre-temps : on ne l'écrase pas
+            self.path = claim_path(self.path, self)
+            self.filename = os.path.basename(self.path)
         if ffmpeg:
             cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", video]
             if audio:
@@ -469,10 +487,10 @@ class HlsDownload:
         base = os.path.splitext(self.path)[0]
         final = base + vext
         if final != self.path:
-            final = _unique_path(final)
+            final = claim_path(final, self)
         os.replace(video, final)
         if audio:
-            os.replace(audio, _unique_path(base + ".audio" + os.path.splitext(audio)[1]))
+            os.replace(audio, claim_path(base + ".audio" + os.path.splitext(audio)[1], self))
             self.note = "piste audio séparée enregistrée à côté (installez ffmpeg pour les fusionner)"
         self.path, self.filename = final, os.path.basename(final)
         shutil.rmtree(self.part, ignore_errors=True)

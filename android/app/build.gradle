@@ -1,0 +1,52 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.varikaagency.download'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.varikaagency.download'
+        minSdk 29            // Android 10+ : enregistrement dans « Téléchargements » sans permission de stockage
+        targetSdk 34
+        versionCode 4
+        versionName '1.3.0'
+    }
+
+    // Signature de la version « release » : fournie par les secrets GitHub (voir README)
+    signingConfigs {
+        release {
+            def ks = System.getenv('VARIKA_KEYSTORE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('VARIKA_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('VARIKA_KEY_ALIAS')
+                keyPassword System.getenv('VARIKA_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (System.getenv('VARIKA_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // L'interface est la même que sur Windows : on copie ../../ui/index.html dans les ressources de l'appli
+    sourceSets {
+        main.assets.srcDirs += "$buildDir/generated/varika-ui"
+    }
+}
+
+tasks.register('copyUi', Copy) {
+    from("$rootDir/../ui") { include 'index.html' }
+    into "$buildDir/generated/varika-ui/ui"
+}
+preBuild.dependsOn copyUi

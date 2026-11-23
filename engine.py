@@ -23,9 +23,11 @@ Le principe d'un gestionnaire comme IDM tient en 4 idées :
    ce fichier et on redemande seulement les octets manquants.
 """
 
+import errno
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import urllib.error
@@ -37,6 +39,77 @@ MIN_SPLIT = 512 * 1024       # on ne découpe pas un segment restant plus petit
 MAX_RETRIES = 8              # tentatives par connexion avant abandon
 TIMEOUT = 30                 # secondes sans données avant de réessayer
 UA = "Mozilla/5.0 (Varika Download)"
+
+class _SafeRedirect(urllib.request.HTTPRedirectHandler):
+    """Après une redirection vers un AUTRE site, on retire les cookies et l'authentification."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlparse(newurl).hostname != urllib.parse.urlparse(req.full_url).hostname:
+            for k in list(new.headers):
+                if k.lower() in ("cookie", "authorization"):
+                    del new.headers[k]
+        return new
+
+
+_opener = urllib.request.build_opener(_SafeRedirect)
+
+
+def http_open(req, timeout=TIMEOUT):
+    return _opener.open(req, timeout=timeout)
+
+
+# ---- B3 / B14 : réservation des noms de fichiers entre téléchargements simultanés
+_reserved = {}
+_reserve_lock = threading.Lock()
+
+
+def _taken(p, owner):
+    o = _reserved.get(os.path.normcase(os.path.abspath(p)))
+    return o is not None and o is not owner
+
+
+def claim_path(path, owner, exts=(".part", ".parts")):
+    """Choisit un nom libre (sur le disque ET parmi les téléchargements en cours) et le réserve."""
+    base, ext = os.path.splitext(path)
+    with _reserve_lock:
+        i = 0
+        while True:
+            p = path if i == 0 else f"{base} ({i}){ext}"
+            if not _taken(p, owner) and not os.path.exists(p) and not any(os.path.exists(p + e) for e in exts):
+                _reserved[os.path.normcase(os.path.abspath(p))] = owner
+                return p
+            i += 1
+
+
+def claim_existing(path, owner):
+    """Réserve un chemin déjà choisi (reprise). False s'il est utilisé par un autre téléchargement."""
+    key = os.path.normcase(os.path.abspath(path))
+    with _reserve_lock:
+        if _reserved.get(key) not in (None, owner):
+            return False
+        _reserved[key] = owner
+        return True
+
+
+def release_path(path):
+    if path:
+        with _reserve_lock:
+            _reserved.pop(os.path.normcase(os.path.abspath(path)), None)
+
+
+def check_free_space(folder, needed):
+    """B19 : refuse tout de suite s'il n'y a pas la place."""
+    if not needed:
+        return
+    try:
+        free = shutil.disk_usage(folder).free
+    except OSError:
+        return
+    if free < needed + 16 * 1024 * 1024:
+        raise OSError(f"Espace disque insuffisant : {human_size(needed)} nécessaires, "
+                      f"{human_size(free)} libres dans {folder}")
+
 
 # Statuts affichés
 QUEUED = "en attente"
@@ -75,14 +148,30 @@ def _filename_from_headers(headers, url):
         return urllib.parse.unquote(m.group(2).strip('"'), encoding=m.group(1) or "utf-8")
     m = re.search(r'filename\s*=\s*"?([^";]+)"?', cd, re.I)
     if m:
-        return m.group(1).strip()
+        name = m.group(1).strip()
+        try:   # en-tête en UTF-8 brut, lu comme du latin-1 par Python
+            return name.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return name
     name = os.path.basename(urllib.parse.urlparse(url).path)
     return urllib.parse.unquote(name) or "telechargement"
 
 
-def _safe_name(name):
+_RESERVED_WIN = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+
+
+def _safe_name(name, max_len=180):
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
-    return name or "telechargement"
+    if not name:
+        return "telechargement"
+    base, ext = os.path.splitext(name)
+    if len(ext) > 16:
+        base, ext = name, ""
+    if base.split(".")[0].upper() in _RESERVED_WIN:      # CON.txt, nul.zip… interdits sous Windows
+        base = "_" + base
+    if len(base) + len(ext) > max_len:
+        base = base[:max_len - len(ext)].rstrip(" .")
+    return (base + ext) or "telechargement"
 
 
 def _unique_path(path):
@@ -135,6 +224,10 @@ class Download:
         # indispensables pour les liens protégés par une session.
         self.headers = {k: v for k, v in (headers or {}).items() if v}
         self._probed = False
+        self.source_url = url      # lien d'origine (avant redirections) : sert à renouveler un lien expiré
+        self.etag = None           # empreinte du fichier sur le serveur (ETag / Last-Modified)
+        self.note = None
+        self._not_ranged = 0
 
         self.filename = None
         self.path = None           # chemin final
@@ -158,6 +251,7 @@ class Download:
         return {"url": self.url, "dest_dir": self.dest_dir, "connections": self.connections,
                 "filename": self.filename, "path": self.path, "total": self.total,
                 "resumable": self.resumable, "status": self.status, "error": self.error,
+                "source_url": self.source_url, "etag": self.etag,
                 # Les cookies ne sont pas écrits sur le disque (ce sont des secrets de session).
                 "headers": {k: v for k, v in self.headers.items() if k.lower() != "cookie"}}
 
@@ -167,6 +261,7 @@ class Download:
         d.filename, d.path = r.get("filename"), r.get("path")
         d.total, d.resumable = r.get("total"), r.get("resumable", False)
         d.error = r.get("error")
+        d.source_url, d.etag = r.get("source_url") or r["url"], r.get("etag")
         if r.get("status") == COMPLETED and d.path and os.path.exists(d.path):
             d.status = COMPLETED
             return d
@@ -174,6 +269,7 @@ class Download:
         if d.path and d.resumable and d._try_load_state(d.path):
             return d                          # reprise possible là où on s'était arrêté
         d.path, d.total, d.resumable, d.segments = None, None, False, []   # on recommencera
+        d.url = d.source_url                  # depuis le lien d'origine (l'autre a pu expirer)
         return d
 
     kind = "file"
@@ -188,6 +284,7 @@ class Download:
                     os.remove(p)
             except OSError:
                 pass
+        release_path(self.path)
 
     # ---------------------------------------------------------------- API
     def start(self):
@@ -252,6 +349,9 @@ class Download:
                     self.status = PROBING
                     self._probe()
                 self._prepare()
+            elif self.resumable and not self._probed:
+                self.status = PROBING
+                self._refresh()                 # B5 / B12 : lien expiré ou fichier modifié
             self.status = DOWNLOADING
             if self.resumable:
                 self._run_segmented()
@@ -263,6 +363,7 @@ class Download:
             else:
                 self._save_state()
                 self.status = PAUSED
+                self._probed = False            # à la reprise, on revérifie le lien
         except Exception as e:  # noqa: BLE001 — on affiche l'erreur à l'utilisateur
             self.error = str(e)
             self.status = ERROR
@@ -273,11 +374,17 @@ class Download:
         finally:
             self.speed = 0.0
             self.active = 0
+            if self.status in (PAUSED, ERROR):
+                release_path(self.path)       # le .part sur le disque suffit à protéger le nom
 
     # 1) Sonder le serveur
-    def _h(self, extra=None):
+    def _h(self, extra=None, url=None):
         h = {"User-Agent": UA}
         h.update(self.headers)
+        # B31 : les cookies du site d'origine ne partent jamais vers un autre site
+        target = urllib.parse.urlparse(url or self.url).hostname
+        if target != urllib.parse.urlparse(self.source_url).hostname:
+            h = {k: v for k, v in h.items() if k.lower() not in ("cookie", "authorization")}
         h.update(extra or {})
         return h
 
@@ -285,11 +392,46 @@ class Download:
         """Sonde le serveur tout de suite (lève une exception si le lien ne marche pas)."""
         self._probe()
 
+    def _ask(self, url):
+        """Requête de sondage : renvoie la réponse ouverte (Range 0-0, ou sans Range si refusé)."""
+        try:
+            return http_open(urllib.request.Request(url, headers=self._h({"Range": "bytes=0-0"}, url)))
+        except urllib.error.HTTPError as e:
+            if e.code != 416:                 # 416 : fichier vide ou plage refusée
+                raise
+            return http_open(urllib.request.Request(url, headers=self._h(None, url)))
+
+    @staticmethod
+    def _fingerprint(h):
+        return h.get("ETag") or h.get("Last-Modified")
+
+    def _refresh(self):
+        """Reprise : renouvelle le lien (les liens signés expirent) et vérifie que le fichier n'a pas changé."""
+        try:
+            with self._ask(self.source_url) as r:
+                final_url, h, status = r.geturl(), r.headers, r.status
+        except Exception:  # noqa: BLE001 — lien d'origine mort : on tente l'ancien lien tel quel
+            self._probed = True
+            return
+        m = re.search(r"/(\d+)\s*$", h.get("Content-Range", "")) if status == 206 else None
+        total = int(m.group(1)) if m else None
+        fp = self._fingerprint(h)
+        if total != self.total or (fp and self.etag and fp != self.etag):
+            # Le fichier a changé : on jette la partie déjà reçue et on recommence proprement.
+            self.cleanup_files()
+            self.path, self.segments, self._probed = None, [], False
+            self.total, self.resumable = None, False
+            self._probe()
+            self._prepare()
+            self.note = "Le fichier a changé sur le serveur : téléchargement recommencé"
+            return
+        self.url, self._probed = final_url, True
+
     def _probe(self):
-        req = urllib.request.Request(self.url, headers=self._h({"Range": "bytes=0-0"}))
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with self._ask(self.url) as r:
             final_url = r.geturl()            # après d'éventuelles redirections
             h = r.headers
+            self.etag = self._fingerprint(h)
             if r.status == 206:
                 m = re.search(r"/(\d+)\s*$", h.get("Content-Range", ""))
                 if m:
@@ -311,7 +453,8 @@ class Download:
         if self.resumable and self._try_load_state(wanted):
             return
 
-        self.path = _unique_path(wanted)
+        check_free_space(self.dest_dir, self.total)
+        self.path = claim_path(wanted, self)
         self.filename = os.path.basename(self.path)
         if not self.resumable:
             return
@@ -337,7 +480,9 @@ class Download:
                 st = json.load(f)
         except (OSError, ValueError):
             return False
-        if st.get("url") != self.url or st.get("total") != self.total:
+        if st.get("url") not in (self.url, self.source_url) or st.get("total") != self.total:
+            return False
+        if not claim_existing(path, self):     # B3 : déjà utilisé par un autre téléchargement en cours
             return False
         self.path = path
         self.segments = [Segment(d["start"], d["end"], d["pos"]) for d in st["segments"]]
@@ -413,9 +558,21 @@ class Download:
         while not self._stop.is_set() and not seg.done:
             try:
                 req = urllib.request.Request(self.url, headers=self._h({"Range": f"bytes={seg.pos}-{seg.end}"}))
-                with urllib.request.urlopen(req, timeout=TIMEOUT) as r, open(self.part, "r+b") as f:
+                with http_open(req) as r, open(self.part, "r+b") as f:
                     if r.status != 206:
+                        self._not_ranged += 1
+                        if self._not_ranged >= 3:
+                            self._fatal = "le serveur ne permet plus le téléchargement par morceaux"
+                            self._stop.set()
+                            return
                         raise RuntimeError("le serveur a ignoré la plage demandée")
+                    m = re.match(r"bytes (\d+)-\d+/(\d+|\*)", r.headers.get("Content-Range", ""))
+                    if m and m.group(2) != "*" and int(m.group(2)) != self.total:
+                        self._fatal = "le fichier a changé sur le serveur pendant le téléchargement : relancez-le"
+                        self._stop.set()
+                        return
+                    if m and int(m.group(1)) != seg.pos:
+                        raise RuntimeError("le serveur a renvoyé une autre plage que celle demandée")
                     with self._lock:
                         self.active += 1
                     try:
@@ -451,6 +608,10 @@ class Download:
                     return
                 retries = self._backoff(retries, f"HTTP {e.code}")
             except (OSError, ConnectionError, RuntimeError) as e:
+                if getattr(e, "errno", None) == errno.ENOSPC:
+                    self._fatal = "disque plein : libérez de l'espace puis reprenez le téléchargement"
+                    self._stop.set()
+                    return
                 retries = self._backoff(retries, str(e))
             if retries < 0:
                 return
@@ -468,7 +629,7 @@ class Download:
     def _run_single(self):
         self._stream_bytes = 0
         req = urllib.request.Request(self.url, headers=self._h())
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r, open(self.part, "wb") as f:
+        with http_open(req) as r, open(self.part, "wb") as f:
             self.active = 1
             last_t, last_b = time.time(), 0
             while not self._stop.is_set():
@@ -486,11 +647,20 @@ class Download:
             return False
         if self.total is None:
             self.total = self._stream_bytes
-        return self._stream_bytes == self.total
+        if self._stream_bytes != self.total:
+            raise ConnectionError(f"connexion interrompue ({human_size(self._stream_bytes)} reçus sur "
+                                  f"{human_size(self.total)}) : réessayez")
+        return True
 
     # 4) Assemblage final
     def _finish(self):
-        os.replace(self.part, self.path)
+        target = self.path
+        if os.path.exists(target):          # B14 : un fichier de ce nom est apparu entre-temps
+            target = claim_path(target, self)
+        os.replace(self.part, target)
         if os.path.exists(self.state_file):
             os.remove(self.state_file)
+        release_path(self.path)
+        release_path(target)
+        self.path, self.filename = target, os.path.basename(target)
         self.status = COMPLETED
