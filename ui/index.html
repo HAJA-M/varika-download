@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Varika Download</title>
+<style>
+:root{
+  --bg:#0b0c0b; --side:#0f110f; --surface:#141714; --surface2:#1a1e1a; --hover:#222722;
+  --border:#252a25; --border2:#333a32; --text:#eef1ea; --muted:#959e91; --faint:#646d61;
+  --accent:#BFFE6F; --accent2:#93E84A; --ink:#0A0B0A; --ok:#22c55e; --warn:#f5a524; --err:#f04461;
+  --radius:14px;
+  font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Inter,Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-size:14px;overflow:hidden;
+  -webkit-font-smoothing:antialiased;user-select:none}
+input,select,button{font:inherit;color:inherit}
+button{cursor:pointer}
+svg{display:block}
+::-webkit-scrollbar{width:10px}
+::-webkit-scrollbar-thumb{background:#2b312a;border-radius:10px;border:3px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a4239}
+
+.app{display:grid;grid-template-columns:244px 1fr;height:100vh}
+
+/* ---------- barre latérale ---------- */
+.sidebar{background:var(--side);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:18px 12px 14px;min-height:0}
+.brand{display:flex;align-items:center;gap:11px;padding:2px 8px 16px}
+.brand svg{width:38px;height:38px;flex:none;filter:drop-shadow(0 6px 16px rgba(191,254,111,.25))}
+.brand b{font-size:16.5px;letter-spacing:.2px;display:block}
+.brand small{color:var(--muted);font-size:11.5px}
+.nav{overflow:auto;flex:1;min-height:0;margin:0 -4px;padding:0 4px}
+.nav-label{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);padding:14px 10px 6px}
+.nav-btn{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;background:none;border-radius:9px;color:var(--muted);text-align:left;transition:background .15s,color .15s}
+.nav-btn:hover{background:var(--surface);color:var(--text)}
+.nav-btn.active{background:linear-gradient(90deg,rgba(191,254,111,.17),rgba(191,254,111,.03));color:var(--text);box-shadow:inset 2px 0 0 var(--accent)}
+.nav-btn svg{width:17px;height:17px;flex:none;opacity:.9}
+.nav-btn .sw{width:9px;height:9px;border-radius:3px;flex:none;margin:0 4px}
+.nav-btn .count{margin-left:auto;font-size:11.5px;color:var(--faint);background:var(--surface);padding:1px 7px;border-radius:99px;min-width:24px;text-align:center}
+.nav-btn.active .count{color:var(--text);background:rgba(191,254,111,.22)}
+
+.speed-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:12px 12px 10px;margin-top:10px}
+.speed-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.speed-head span{color:var(--muted);font-size:12px}
+.speed-head b{font-size:15px;font-variant-numeric:tabular-nums}
+#spark{width:100%;height:44px;margin-top:8px}
+.disk{font-size:11.5px;color:var(--faint);margin-top:6px;display:flex;justify-content:space-between}
+.side-btn{display:flex;align-items:center;gap:10px;margin-top:10px;padding:9px 10px;border:1px solid var(--border);background:none;border-radius:10px;color:var(--muted);transition:.15s}
+.side-btn:hover{color:var(--text);border-color:var(--border2);background:var(--surface)}
+.side-btn svg{width:17px;height:17px}
+
+/* ---------- zone principale ---------- */
+main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.topbar{padding:20px 28px 0}
+.add-box{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:7px 7px 7px 16px;transition:border-color .15s,box-shadow .15s}
+.add-box:focus-within{border-color:rgba(191,254,111,.6);box-shadow:0 0 0 4px rgba(191,254,111,.12)}
+.add-box>svg{width:19px;height:19px;color:var(--muted);flex:none}
+.add-box input{flex:1;min-width:0;background:none;border:0;outline:0;font-size:14.5px;padding:8px 0;user-select:text}
+.add-box input::placeholder{color:var(--faint)}
+.conn-chip{display:flex;align-items:center;gap:6px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:0 4px 0 10px;height:38px;color:var(--muted);font-size:12.5px}
+.conn-chip svg{width:15px;height:15px}
+.conn-chip select{background:none;border:0;outline:0;color:var(--text);padding:6px 2px;cursor:pointer}
+.conn-chip select option{background:var(--surface2)}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid transparent;border-radius:11px;height:38px;padding:0 16px;font-weight:600;font-size:13.5px;transition:.15s;white-space:nowrap}
+.btn svg{width:16px;height:16px}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:var(--ink);box-shadow:0 8px 22px -8px rgba(191,254,111,.7)}
+.btn.primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.btn.primary:active{transform:none}
+.btn.ghost{background:none;border-color:var(--border);color:var(--muted);font-weight:500;height:34px;padding:0 12px;font-size:13px}
+.btn.ghost:hover{color:var(--text);border-color:var(--border2);background:var(--surface)}
+.btn.danger{background:var(--err);color:#fff}
+.btn.danger:hover{filter:brightness(1.08)}
+
+.clip{display:flex;align-items:center;gap:10px;margin-top:10px;padding:8px 8px 8px 14px;border-radius:12px;background:rgba(191,254,111,.08);border:1px dashed rgba(191,254,111,.35);font-size:13px;color:var(--muted);animation:drop .25s ease}
+.clip[hidden]{display:none}
+.clip svg{width:16px;height:16px;color:var(--accent);flex:none}
+.clip span{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.clip .btn{height:30px;padding:0 12px;font-size:12.5px}
+.icon-btn{width:30px;height:30px;border-radius:9px;border:0;background:none;color:var(--muted);display:grid;place-items:center;flex:none;transition:.15s}
+.icon-btn:hover{background:var(--hover);color:var(--text)}
+.icon-btn svg{width:16px;height:16px}
+
+.toolbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 28px 12px}
+.toolbar h1{font-size:20px;font-weight:650;letter-spacing:-.01em;white-space:nowrap}
+.toolbar h1 small{font-size:13px;color:var(--faint);font-weight:500;margin-left:8px}
+.tools{display:flex;align-items:center;gap:8px}
+.search{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 10px;height:34px;width:210px}
+.search svg{width:15px;height:15px;color:var(--faint);flex:none}
+.search input{background:none;border:0;outline:0;width:100%;font-size:13px;user-select:text}
+.search input::placeholder{color:var(--faint)}
+
+/* ---------- liste ---------- */
+.list{flex:1;overflow:auto;padding:4px 28px 28px;display:flex;flex-direction:column;gap:10px}
+.item{display:grid;grid-template-columns:46px minmax(0,1fr) 116px auto;align-items:center;gap:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 14px 14px 16px;transition:border-color .15s,background .15s;animation:drop .3s ease}
+.item:hover{border-color:var(--border2);background:#171b17}
+@keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+.ficon{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;position:relative;background:color-mix(in srgb,var(--c) 15%,transparent);color:var(--c)}
+.ficon svg{width:21px;height:21px}
+.ficon i{position:absolute;bottom:-5px;right:-6px;font-style:normal;font-size:9px;font-weight:700;letter-spacing:.03em;background:var(--c);color:#0a0b0a;padding:1px 5px;border-radius:5px;max-width:46px;overflow:hidden}
+.main-col{min-width:0}
+.row1{display:flex;align-items:center;gap:10px;min-width:0}
+.name{font-weight:600;font-size:14.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pill{flex:none;font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:99px;display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.downloading{color:var(--accent);background:rgba(191,254,111,.13)}
+.pill.probing,.pill.queued,.pill.assembling{color:var(--muted);background:rgba(138,150,174,.12)}
+.pill.paused{color:var(--warn);background:rgba(245,165,36,.12)}
+.pill.completed{color:var(--ok);background:rgba(34,197,94,.12)}
+.pill.error{color:var(--err);background:rgba(240,68,97,.13)}
+.pill.downloading::before{animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.25}}
+
+.bar{position:relative;height:7px;border-radius:99px;background:#0a0b0a;margin:9px 0 8px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}
+.bar>div{position:absolute;top:0;bottom:0}
+.bar .fill{background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s ease}
+.bar .seg{background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .4s ease}
+.bar .cut{width:2px;background:var(--bg);opacity:.9}
+.item.paused .bar .seg,.item.paused .bar .fill{background:var(--warn);opacity:.75}
+.item.error .bar .seg,.item.error .bar .fill{background:var(--err);opacity:.7}
+.item.completed .bar .fill{background:var(--ok)}
+.bar .indet{left:0;width:35%;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:indet 1.2s infinite linear}
+@keyframes indet{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+
+.meta{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12.5px;min-width:0;white-space:nowrap}
+.meta .dot{color:var(--faint)}
+.meta .host{overflow:hidden;text-overflow:ellipsis}
+.meta .err{color:var(--err);overflow:hidden;text-overflow:ellipsis}
+.stats{text-align:right;font-variant-numeric:tabular-nums}
+.stats .speed{font-weight:600;font-size:14px}
+.stats .eta{color:var(--muted);font-size:12px;margin-top:3px}
+.actions{display:flex;gap:4px}
+.act{width:34px;height:34px;border-radius:10px;border:1px solid transparent;background:none;color:var(--muted);display:grid;place-items:center;transition:.15s}
+.act svg{width:17px;height:17px}
+.act:hover{background:var(--hover);color:var(--text);border-color:var(--border)}
+.act.main{background:var(--surface2);border-color:var(--border);color:var(--text)}
+.act.main:hover{border-color:var(--accent);color:var(--accent)}
+.act.del:hover{color:var(--err);border-color:rgba(240,68,97,.35);background:rgba(240,68,97,.08)}
+
+.empty{position:absolute;inset:190px 28px 28px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;color:var(--muted);pointer-events:none}
+.empty[hidden]{display:none}
+.empty svg{width:120px;height:120px;margin-bottom:8px}
+.empty h2{color:var(--text);font-size:17px;font-weight:600}
+.empty p{max-width:380px;line-height:1.55;font-size:13.5px}
+.empty .btn{pointer-events:auto;margin-top:8px}
+/* intégration navigateur */
+.side-btn .ext-dot{width:8px;height:8px;border-radius:50%;margin-left:auto;background:var(--faint)}
+.side-btn .ext-dot.on{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.dialog.wide{width:620px}
+.ext-status{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:var(--bg);border:1px solid var(--border)}
+.ext-status svg{width:22px;height:22px;flex:none;color:var(--faint)}
+.ext-status.on{border-color:rgba(191,254,111,.35);background:rgba(191,254,111,.06)}
+.ext-status.on svg{color:var(--accent)}
+.ext-status.err{border-color:rgba(240,68,97,.4);background:rgba(240,68,97,.06)}
+.ext-status.err svg{color:var(--err)}
+.ext-status b{display:block;font-size:14px}
+.ext-status span{color:var(--muted);font-size:12.5px}
+.tabs{display:flex;gap:6px;background:var(--bg);border:1px solid var(--border);border-radius:11px;padding:4px}
+.tabs button{flex:1;height:32px;border:0;border-radius:8px;background:none;color:var(--muted);font-weight:600;font-size:13px}
+.tabs button.active{background:var(--surface2);color:var(--text);box-shadow:inset 0 0 0 1px var(--border2)}
+.steps{list-style:none;display:flex;flex-direction:column;gap:10px;counter-reset:st}
+.steps li{display:grid;grid-template-columns:28px 1fr;gap:12px;counter-increment:st}
+.steps li::before{content:counter(st);width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--surface2);border:1px solid var(--border2);font-weight:700;font-size:12.5px;color:var(--accent)}
+.steps b{display:block;font-size:13.5px;margin:4px 0 3px}
+.steps p{color:var(--muted);font-size:12.5px;line-height:1.5}
+.steps .act-row{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;align-items:center}
+.steps code{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:5px 8px;color:var(--text);user-select:text;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feature-list{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;color:var(--muted);font-size:12.5px}
+.feature-list div{display:flex;gap:8px;align-items:flex-start;line-height:1.45}
+.feature-list svg{width:15px;height:15px;color:var(--accent);flex:none;margin-top:1px}
+
+/* ---------- glisser-déposer ---------- */
+.dropzone{position:fixed;inset:0;background:rgba(11,12,11,.84);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:60}
+.dropzone.on{display:flex}
+.dropzone div{border:2px dashed var(--accent);border-radius:22px;padding:48px 64px;text-align:center;color:var(--text);font-size:17px;font-weight:600;background:rgba(191,254,111,.06)}
+.dropzone small{display:block;color:var(--muted);font-weight:400;font-size:13px;margin-top:6px}
+
+/* ---------- fenêtres modales ---------- */
+.modal{position:fixed;inset:0;background:rgba(4,5,4,.68);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:50}
+.modal.on{display:flex;animation:fade .15s ease}
+@keyframes fade{from{opacity:0}}
+.dialog{width:460px;max-width:calc(100vw - 40px);background:var(--surface);border:1px solid var(--border2);border-radius:18px;box-shadow:0 30px 80px -20px rgba(0,0,0,.6);animation:pop .2s ease}
+@keyframes pop{from{transform:scale(.96);opacity:0}}
+.dialog{max-height:calc(100vh - 32px);display:flex;flex-direction:column}
+.dialog .body{overflow:auto;min-height:0}
+.dialog header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 6px}
+.dialog h3{font-size:16.5px;font-weight:650}
+.dialog .body{padding:8px 20px 4px;display:flex;flex-direction:column;gap:16px}
+.dialog footer{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px 18px}
+.field label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:7px}
+.field label b{color:var(--text);font-variant-numeric:tabular-nums}
+.path-row{display:flex;gap:8px}
+.path-row input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:0 12px;height:38px;outline:0;font-size:13px;user-select:text}
+.path-row input:focus{border-color:var(--accent)}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.hint{font-size:12px;color:var(--faint);line-height:1.5}
+.check{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted);cursor:pointer}
+.check input{width:16px;height:16px;accent-color:var(--err)}
+.dialog p{color:var(--muted);line-height:1.55;font-size:13.5px}
+.dialog p b{color:var(--text);word-break:break-all}
+
+/* ---------- notifications ---------- */
+#toasts{position:fixed;right:22px;bottom:22px;display:flex;flex-direction:column;gap:10px;z-index:70}
+.toast{display:flex;align-items:center;gap:12px;min-width:300px;max-width:420px;background:var(--surface2);border:1px solid var(--border2);border-left:3px solid var(--accent);border-radius:12px;padding:12px 12px 12px 14px;box-shadow:0 18px 40px -12px rgba(0,0,0,.6);animation:slide .25s ease;font-size:13px}
+.toast.ok{border-left-color:var(--ok)}
+.toast.err{border-left-color:var(--err)}
+.toast svg{width:18px;height:18px;flex:none}
+.toast.ok svg{color:var(--ok)} .toast.err svg{color:var(--err)} .toast.info svg{color:var(--accent)}
+.toast .t{flex:1;min-width:0;line-height:1.4}
+.toast .t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toast .t span{color:var(--muted)}
+.toast .btn{height:30px;padding:0 12px;font-size:12.5px}
+.toast.out{animation:out .25s ease forwards}
+@keyframes slide{from{transform:translateX(30px);opacity:0}}
+@keyframes out{to{transform:translateX(30px);opacity:0}}
+.demo{position:fixed;left:50%;top:10px;transform:translateX(-50%);background:var(--warn);color:#1a1205;font-size:12px;font-weight:600;padding:3px 12px;border-radius:99px;z-index:80}
+
+button:focus{outline:none}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:1180px){ .tools .btn .lbl{display:none} .tools .btn.ghost{padding:0 9px} }
+@media (max-width:1040px){
+  .item{grid-template-columns:46px minmax(0,1fr) auto}
+  .stats{display:none}
+  .search{width:160px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="110" fill="#BFFE6F"/><g transform="translate(0 -22)"><path d="M145 182 H193 L256 318.5 L318 182 H366 L278 405 L269 414 H242 L233 405 Z" fill="#0A0B0A" stroke="#0A0B0A" stroke-width="3" stroke-linejoin="round"/><circle cx="255.5" cy="144" r="43.5" fill="#0A0B0A"/><path d="M237.5 146 L250 158.5 L274.5 132" fill="none" stroke="#BFFE6F" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M189 421 V447 H322 V421" fill="none" stroke="#0A0B0A" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/></g></svg>
+      <div><b>Varika Download</b><small>by Varika Agency</small></div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="speed-card">
+      <div class="speed-head"><span>Débit total</span><b id="totalSpeed">0 o/s</b></div>
+      <canvas id="spark"></canvas>
+      <div class="disk"><span id="activeCount">Aucun actif</span><span id="disk"></span></div>
+    </div>
+    <button class="side-btn" id="btnExt"><span data-icon="puzzle"></span>Extension navigateur<i class="ext-dot" id="extDot"></i></button>
+    <button class="side-btn" id="btnSettings" style="margin-top:6px"><span data-icon="settings"></span>Paramètres</button>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="add-box">
+        <span data-icon="link"></span>
+        <input id="url" placeholder="Collez un lien de téléchargement (ou glissez-le dans la fenêtre)…" spellcheck="false" autocomplete="off">
+        <label class="conn-chip" title="Connexions simultanées pour ce téléchargement">
+          <span data-icon="bolt"></span><select id="conn"></select>
+        </label>
+        <button class="btn primary" id="btnAdd"><span data-icon="download"></span>Télécharger</button>
+      </div>
+      <div class="clip" id="clip" hidden>
+        <span data-icon="clipboard"></span>
+        Lien copié détecté&nbsp;:<span id="clipUrl"></span>
+        <button class="btn primary" id="clipUse">Télécharger</button>
+        <button class="icon-btn" id="clipDismiss" title="Ignorer"><span data-icon="x"></span></button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <h1 id="viewTitle">Tous les téléchargements</h1>
+      <div class="tools">
+        <div class="search"><span data-icon="search"></span><input id="search" placeholder="Rechercher…" spellcheck="false"></div>
+        <button class="btn ghost" id="resumeAll" title="Reprendre tous les téléchargements en pause"><span data-icon="play"></span><span class="lbl">Tout reprendre</span></button>
+        <button class="btn ghost" id="pauseAll" title="Mettre tout en pause"><span data-icon="pause"></span><span class="lbl">Tout suspendre</span></button>
+        <button class="btn ghost" id="clearDone" title="Retirer les terminés de la liste (les fichiers restent sur le disque)"><span data-icon="broom"></span><span class="lbl">Nettoyer</span></button>
+      </div>
+    </div>
+
+    <section class="list" id="list"></section>
+    <div class="empty" id="empty" hidden>
+      <svg viewBox="0 0 120 120" fill="none"><circle cx="60" cy="60" r="56" fill="#141714" stroke="#252a25"/><rect x="34" y="30" width="52" height="62" rx="9" fill="#1a1e1a" stroke="#333a32"/><path d="M60 44v24m0 0-9-9m9 9 9-9" stroke="#BFFE6F" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M46 76h28" stroke="#333a32" stroke-width="4.5" stroke-linecap="round"/></svg>
+      <h2 id="emptyTitle">Aucun téléchargement</h2>
+      <button class="btn ghost" id="emptyExt" hidden><span data-icon="puzzle"></span>Installer l'extension navigateur</button>
+      <p id="emptyText">Collez un lien ci-dessus pour commencer. Varika Download découpe chaque fichier et ouvre jusqu'à 32 connexions en parallèle pour aller plus vite.</p>
+    </div>
+  </main>
+</div>
+
+<div class="dropzone" id="dropzone"><div>Déposez le lien ici<small>Il sera ajouté à la liste des téléchargements</small></div></div>
+
+<div class="modal" id="settingsModal">
+  <div class="dialog">
+    <header><h3>Paramètres</h3><button class="icon-btn" data-close><span data-icon="x"></span></button></header>
+    <div class="body">
+      <div class="field">
+        <label>Dossier de destination</label>
+        <div class="path-row"><input id="setDest" spellcheck="false"><button class="btn ghost" id="browse"><span data-icon="folder"></span>Parcourir</button></div>
+      </div>
+      <div class="field">
+        <label>Connexions par défaut <b id="setConnVal">8</b></label>
+        <input type="range" id="setConn" min="1" max="32">
+        <div class="hint">Plus de connexions accélèrent les serveurs qui limitent le débit par connexion. 8 à 16 suffit en général.</div>
+      </div>
+      <div class="field">
+        <label>Téléchargements simultanés <b id="setParVal">3</b></label>
+        <input type="range" id="setPar" min="1" max="8">
+      </div>
+      <label class="check" style="accent-color:var(--accent)"><input type="checkbox" id="setShow" style="accent-color:var(--accent)"> Afficher la fenêtre quand un téléchargement arrive du navigateur</label>
+    </div>
+    <footer><span class="hint" id="version" style="margin-right:auto;align-self:center"></span><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="saveSettings">Enregistrer</button></footer>
+  </div>
+</div>
+
+<div class="modal" id="extModal">
+  <div class="dialog wide">
+    <header><h3>Extension navigateur</h3><button class="icon-btn" data-close><span data-icon="x"></span></button></header>
+    <div class="body">
+      <div class="ext-status" id="extStatus"></div>
+      <div class="feature-list">
+        <div><span data-icon="check"></span>Les fichiers cliqués dans le navigateur arrivent ici automatiquement</div>
+        <div><span data-icon="check"></span>Clic droit → « Télécharger avec Varika Download » sur un lien, une image ou une vidéo</div>
+        <div><span data-icon="check"></span>Cookies de session transmis : les liens protégés fonctionnent</div>
+        <div><span data-icon="check"></span>Logiciel fermé ? L'extension le lance, ou laisse le navigateur faire</div>
+      </div>
+      <div class="tabs" id="browserTabs">
+        <button data-b="chrome" class="active">Chrome</button><button data-b="edge">Edge</button><button data-b="opera">Opera</button><button data-b="brave">Brave</button>
+      </div>
+      <ol class="steps">
+        <li><div><b>Ouvrez la page des extensions</b><p>Ou tapez l'adresse dans la barre du navigateur.</p>
+          <div class="act-row"><button class="btn ghost" id="openExtPage"><span data-icon="open"></span><span id="openExtLbl">Ouvrir</span></button><code id="extUrl">chrome://extensions</code><button class="icon-btn" id="copyExtUrl" title="Copier l'adresse"><span data-icon="clipboard"></span></button></div></div></li>
+        <li><div><b>Activez le « Mode développeur »</b><p id="devModeHint"></p></div></li>
+        <li><div><b id="loadLabel">Cliquez sur « Charger l'extension non empaquetée »</b><p>Puis sélectionnez ce dossier :</p>
+          <div class="act-row"><button class="btn ghost" id="openExtFolder"><span data-icon="folder"></span>Ouvrir le dossier</button><code id="extFolder"></code></div></div></li>
+        <li><div><b>Épinglez l'icône Varika Download</b><p>Via l'icône en forme de pièce de puzzle, à droite de la barre d'adresse. Elle permet d'activer ou non la capture et de choisir les types de fichiers.</p></div></li>
+      </ol>
+      <p class="hint">Firefox n'est pas encore pris en charge. Le navigateur peut afficher de temps en temps un avertissement sur les extensions en mode développeur : c'est normal tant que l'extension n'est pas publiée sur le Chrome Web Store.</p>
+    </div>
+    <footer><button class="btn primary" data-close>Terminé</button></footer>
+  </div>
+</div>
+
+<div class="modal" id="removeModal">
+  <div class="dialog">
+    <header><h3>Retirer le téléchargement</h3><button class="icon-btn" data-close><span data-icon="x"></span></button></header>
+    <div class="body">
+      <p>Retirer <b id="removeName"></b> de la liste&nbsp;?</p>
+      <label class="check"><input type="checkbox" id="removeFiles"> Supprimer aussi le fichier du disque</label>
+    </div>
+    <footer><button class="btn ghost" data-close>Annuler</button><button class="btn danger" id="confirmRemove">Retirer</button></footer>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+/* ======================= icônes ======================= */
+const I = {
+  download:'<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14"/>',
+  link:'<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
+  bolt:'<path d="M13 3 5 14h6l-1 7 8-11h-6l1-7z"/>',
+  pause:'<path d="M9 5v14M15 5v14"/>',
+  play:'<path d="M7 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L8.5 4.64A1 1 0 0 0 7 5.5z"/>',
+  folder:'<path d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  trash:'<path d="M4.5 7h15M10 11v6M14 11v6M6.5 7l1 12a2 2 0 0 0 2 1.8h5a2 2 0 0 0 2-1.8l1-12M9.5 7V4.5h5V7"/>',
+  open:'<path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
+  retry:'<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+  x:'<path d="M6 6l12 12M18 6 6 18"/>',
+  clipboard:'<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5h5v3h-5z"/>',
+  broom:'<path d="M14 4 10 12M7 13h7l2 7H5z"/>',
+  puzzle:'<path d="M9.5 4.5a2 2 0 1 1 4 0V6H17a1 1 0 0 1 1 1v3.5h1.5a2 2 0 1 1 0 4H18V18a1 1 0 0 1-1 1h-3.5v-1.5a2 2 0 1 0-4 0V19H6a1 1 0 0 1-1-1v-3.5h1.5a2 2 0 1 0 0-4H5V7a1 1 0 0 1 1-1h3.5z"/>',
+  all:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  active:'<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5"/><path d="M5 19h14" opacity=".5"/>',
+  check:'<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.8-5"/>',
+  alert:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.2v.3"/>',
+  file:'<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
+  video:'<rect x="3.5" y="6" width="12.5" height="12" rx="2.5"/><path d="m16 10.5 4.5-2.5v8l-4.5-2.5"/>',
+  audio:'<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>',
+  doc:'<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 13h6M9 16.5h4"/>',
+  archive:'<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M12 4v3m0 2v2m0 2v2"/><rect x="10.5" y="15" width="3" height="3" rx=".7"/>',
+  program:'<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17M7 13l2 1.75L7 16.5M11.5 16.5h4"/>',
+  image:'<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m20.5 16-5-5-9 8.5"/>',
+};
+const icon = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${I[n]||''}</svg>`;
+document.querySelectorAll('[data-icon]').forEach(el => el.outerHTML = icon(el.dataset.icon));
+
+/* ======================= catégories ======================= */
+const CATS = {
+  video:   {label:'Vidéos',     color:'#ef5da8', ext:'mp4 mkv avi mov webm flv wmv m4v mpg mpeg ts 3gp'},
+  audio:   {label:'Musique',    color:'#22c1c3', ext:'mp3 flac wav aac ogg m4a opus wma'},
+  doc:     {label:'Documents',  color:'#5b8cff', ext:'pdf doc docx xls xlsx ppt pptx txt odt ods epub csv rtf md'},
+  archive: {label:'Archives',   color:'#f5a524', ext:'zip rar 7z tar gz bz2 xz iso tgz cab'},
+  program: {label:'Programmes', color:'#8b5cf6', ext:'exe msi apk dmg deb rpm appimage bat msix jar'},
+  image:   {label:'Images',     color:'#22c55e', ext:'jpg jpeg png gif webp svg psd ai bmp tif tiff heic raw'},
+  other:   {label:'Autres',     color:'#8a96ae', ext:''},
+};
+for (const c of Object.values(CATS)) c.set = new Set(c.ext.split(' ').filter(Boolean));
+const extOf = (n) => { const m = /\.([a-z0-9]{1,8})$/i.exec(n || ''); return m ? m[1].toLowerCase() : ''; };
+const catOf = (n) => { const e = extOf(n); for (const [k, c] of Object.entries(CATS)) if (c.set.has(e)) return k; return 'other'; };
+
+const FILTERS = {
+  all:       {label:'Tous les téléchargements', short:'Tous',     icon:'all',    test:()=>true},
+  active:    {label:'En cours',                 short:'En cours', icon:'active', test:s=>['downloading','probing','queued','assembling'].includes(s)},
+  completed: {label:'Terminés',                 short:'Terminés', icon:'check',  test:s=>s==='completed'},
+  paused:    {label:'En pause',                 short:'En pause', icon:'pause',  test:s=>s==='paused'},
+  error:     {label:'Erreurs',                  short:'Erreurs',  icon:'alert',  test:s=>s==='error'},
+};
+
+/* ======================= formatage ======================= */
+const nf1 = new Intl.NumberFormat('fr-FR', {maximumFractionDigits:1});
+const nf0 = new Intl.NumberFormat('fr-FR', {maximumFractionDigits:0});
+function fmtSize(n){
+  if (n == null) return '?';
+  const u = ['o','Ko','Mo','Go','To']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? nf0.format(n) : (n < 100 ? nf1 : nf0).format(n)) + ' ' + u[i];
+}
+function fmtTime(s){
+  if (s == null || !isFinite(s)) return '';
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return h ? `${h} h ${String(m).padStart(2,'0')}` : m ? `${m} min ${String(x).padStart(2,'0')}` : `${x} s`;
+}
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./,''); } catch { return ''; } };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STATUS_TXT = {queued:'En attente', probing:'Analyse…', downloading:'', paused:'En pause', completed:'Terminé', error:'Erreur', assembling:'Assemblage…'};
+
+/* ======================= état ======================= */
+let api = null, state = {items:[], totalSpeed:0, settings:{}};
+let filter = 'all', cat = null, query = '';
+const rows = new Map(), prevStatus = new Map(), hist = new Array(60).fill(0);
+let lastClip = '', removeId = null, firstState = true;
+const $ = (s) => document.querySelector(s);
+
+/* ======================= barre latérale ======================= */
+function buildNav(){
+  let h = '<div class="nav-label">Téléchargements</div>';
+  for (const [k, f] of Object.entries(FILTERS))
+    h += `<button class="nav-btn" data-filter="${k}">${icon(f.icon)}<span>${f.short}</span><span class="count" data-count="f-${k}">0</span></button>`;
+  h += '<div class="nav-label">Catégories</div>';
+  for (const [k, c] of Object.entries(CATS))
+    h += `<button class="nav-btn" data-cat="${k}"><span class="sw" style="background:${c.color}"></span><span>${c.label}</span><span class="count" data-count="c-${k}">0</span></button>`;
+  $('#nav').innerHTML = h;
+  $('#nav').addEventListener('click', (e) => {
+    const b = e.target.closest('.nav-btn'); if (!b) return;
+    if (b.dataset.filter) { filter = b.dataset.filter; cat = null; }
+    else { cat = cat === b.dataset.cat ? null : b.dataset.cat; filter = 'all'; }
+    render();
+  });
+}
+
+/* ======================= rendu ======================= */
+function rowEl(it){
+  const el = document.createElement('article');
+  el.className = 'item'; el.dataset.id = it.id;
+  el.innerHTML = `
+    <div class="ficon"></div>
+    <div class="main-col">
+      <div class="row1"><div class="name"></div><span class="pill"></span></div>
+      <div class="bar"></div>
+      <div class="meta"></div>
+    </div>
+    <div class="stats"><div class="speed"></div><div class="eta"></div></div>
+    <div class="actions">
+      <button class="act main" data-act="toggle"></button>
+      <button class="act" data-act="folder" title="Afficher dans le dossier">${icon('folder')}</button>
+      <button class="act del" data-act="remove" title="Retirer">${icon('trash')}</button>
+    </div>`;
+  el._k = {};
+  return el;
+}
+function setIf(el, key, prop, val){ if (el._k[key] !== val) { el._k[key] = val; prop(val); } }
+
+function updateRow(el, it){
+  const name = it.filename || hostOf(it.url) || it.url;
+  const c = catOf(it.filename || it.url), C = CATS[c];
+  const q = (s) => el.querySelector(s);
+  el.className = 'item ' + it.status;
+  setIf(el, 'icon', v => { const f = q('.ficon'); f.style.setProperty('--c', C.color);
+    const e = extOf(name); f.innerHTML = icon(c === 'other' ? 'file' : c) + (e ? `<i>${esc(e.toUpperCase())}</i>` : ''); }, c + name);
+  setIf(el, 'name', v => { q('.name').textContent = v; q('.name').title = it.url; }, name);
+
+  const pct = Math.floor(it.progress * 1000) / 10;
+  const pillTxt = it.status === 'downloading' ? (it.total ? nf1.format(pct) + ' %' : 'En cours') : STATUS_TXT[it.status];
+  setIf(el, 'pill', v => { const p = q('.pill'); p.className = 'pill ' + it.status; p.textContent = pillTxt; p.title = it.error || ''; }, it.status + pillTxt + (it.error||''));
+
+  // barre : un bloc coloré par segment (la segmentation se voit en direct)
+  let bar;
+  if (it.status === 'completed') bar = '<div class="fill" style="left:0;width:100%"></div>';
+  else if (it.status === 'probing' || (it.status === 'downloading' && !it.total)) bar = '<div class="indet"></div>';
+  else if (it.segments && it.segments.length) {
+    bar = it.segments.map(([s, e, p]) =>
+      `<div class="seg" style="left:${(s*100).toFixed(3)}%;width:${(Math.max(0,p-s)*100).toFixed(3)}%"></div>` +
+      (s > 0 ? `<div class="cut" style="left:calc(${(s*100).toFixed(3)}% - 1px)"></div>` : '')).join('');
+  } else bar = `<div class="fill" style="left:0;width:${pct}%"></div>`;
+  setIf(el, 'bar', v => q('.bar').innerHTML = v, bar);
+
+  const parts = [];
+  if (it.status === 'completed') parts.push(fmtSize(it.total));
+  else parts.push(`${fmtSize(it.downloaded)} / ${it.kind === 'hls' && it.total ? '≈ ' : ''}${fmtSize(it.total)}`);
+  if (it.kind === 'hls') parts.push('Streaming' + (it.variant ? ' ' + esc(it.variant) : ''));
+  const host = hostOf(it.url); if (host) parts.push(`<span class="host">${esc(host)}</span>`);
+  if (it.status === 'downloading') parts.push(it.kind === 'hls' ? `${it.active} segment${it.active > 1 ? 's' : ''} en parallèle`
+    : it.resumable ? `${it.active} connexion${it.active > 1 ? 's' : ''}` : '1 connexion · pas de reprise');
+  if (it.note) parts.push(`<span class="err" style="color:var(--warn)">${esc(it.note)}</span>`);
+  if (it.status === 'error' && it.error) parts.push(`<span class="err">${esc(it.error)}</span>`);
+  const meta = parts.join('<span class="dot">•</span>');
+  setIf(el, 'meta', v => q('.meta').innerHTML = v, meta);
+
+  const sp = it.status === 'downloading' && it.speed > 0 ? fmtSize(it.speed) + '/s' : '';
+  const eta = it.status === 'downloading' && it.eta != null ? fmtTime(it.eta) + ' restant' :
+              it.status === 'completed' ? new Date(it.added * 1000).toLocaleDateString('fr-FR', {day:'numeric', month:'short'}) : '';
+  setIf(el, 'speed', v => q('.speed').textContent = v, sp);
+  setIf(el, 'eta', v => q('.eta').textContent = v, eta);
+
+  const t = {downloading:['pause','Mettre en pause'], probing:['pause','Mettre en pause'], queued:['pause','Mettre en pause'], assembling:['pause','Assemblage en cours'],
+             paused:['play','Reprendre'], error:['retry','Réessayer'], completed:['open','Ouvrir le fichier']}[it.status];
+  setIf(el, 'toggle', v => { const b = q('[data-act=toggle]'); b.innerHTML = icon(t[0]); b.title = t[1]; }, t[0]);
+}
+
+function render(){
+  const items = state.items;
+  // compteurs
+  for (const k in FILTERS) setCount('f-' + k, items.filter(i => FILTERS[k].test(i.status)).length);
+  for (const k in CATS) setCount('c-' + k, items.filter(i => catOf(i.filename || i.url) === k).length);
+  document.querySelectorAll('.nav-btn').forEach(b =>
+    b.classList.toggle('active', cat ? b.dataset.cat === cat : b.dataset.filter === filter));
+  $('#viewTitle').innerHTML = esc(cat ? CATS[cat].label : FILTERS[filter].label);
+
+  const ql = query.toLowerCase();
+  const visible = items.filter(i => FILTERS[filter].test(i.status) && (!cat || catOf(i.filename || i.url) === cat) &&
+    (!ql || (i.filename || '').toLowerCase().includes(ql) || i.url.toLowerCase().includes(ql)));
+
+  const list = $('#list'), keep = new Set();
+  visible.forEach((it, idx) => {
+    let el = rows.get(it.id);
+    if (!el) { el = rowEl(it); rows.set(it.id, el); }
+    updateRow(el, it);
+    keep.add(it.id);
+    if (list.children[idx] !== el) list.insertBefore(el, list.children[idx] || null);
+  });
+  for (const [id, el] of rows) if (!keep.has(id)) { el.remove(); if (!items.some(i => i.id === id)) rows.delete(id); }
+
+  const empty = !visible.length;
+  $('#empty').hidden = !empty;
+  if (empty) {
+    $('#emptyTitle').textContent = items.length ? 'Rien ici' : 'Aucun téléchargement';
+    $('#emptyText').textContent = items.length ? 'Aucun téléchargement ne correspond à ce filtre.'
+      : "Collez un lien ci-dessus pour commencer. Varika Download découpe chaque fichier et ouvre jusqu'à 32 connexions en parallèle pour aller plus vite.";
+  }
+
+  const ext = state.extension || {};
+  $('#extDot').classList.toggle('on', !!ext.connected);
+  $('#btnExt').title = ext.connected ? 'Extension connectée' : 'Installer l\'extension navigateur';
+  $('#emptyExt').hidden = !(empty && !items.length && !ext.connected);
+  if ($('#extModal').classList.contains('on')) renderExtStatus();
+
+  // débit total + graphique
+  $('#totalSpeed').textContent = fmtSize(state.totalSpeed) + '/s';
+  const act = items.filter(i => i.status === 'downloading').length;
+  $('#activeCount').textContent = act ? `${act} actif${act > 1 ? 's' : ''}` : 'Aucun actif';
+  drawSpark();
+}
+function setCount(k, n){ const el = document.querySelector(`[data-count="${k}"]`); if (el && el.textContent != n) el.textContent = n; }
+
+function drawSpark(){
+  const cv = $('#spark'), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  const max = Math.max(1, ...hist) * 1.15, step = w / (hist.length - 1);
+  const pts = hist.map((v, i) => [i * step, h - 2 - (v / max) * (h - 6)]);
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(191,254,111,.35)'); grad.addColorStop(1, 'rgba(191,254,111,0)');
+  g.beginPath(); g.moveTo(0, h); pts.forEach(([x, y]) => g.lineTo(x, y)); g.lineTo(w, h); g.closePath();
+  g.fillStyle = grad; g.fill();
+  g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y));
+  const lg = g.createLinearGradient(0, 0, w, 0); lg.addColorStop(0, '#93E84A'); lg.addColorStop(1, '#BFFE6F');
+  g.strokeStyle = lg; g.lineWidth = 1.8; g.lineJoin = 'round'; g.stroke();
+}
+
+/* ======================= notifications ======================= */
+function toast(title, sub, type = 'info', action){
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.innerHTML = `${icon(type === 'ok' ? 'check' : type === 'err' ? 'alert' : 'download')}<div class="t"><b>${esc(title)}</b><span>${esc(sub || '')}</span></div>`;
+  if (action) { const b = document.createElement('button'); b.className = 'btn ghost'; b.textContent = action.label; b.onclick = () => { action.fn(); close(); }; t.appendChild(b); }
+  $('#toasts').appendChild(t);
+  const close = () => { t.classList.add('out'); setTimeout(() => t.remove(), 250); };
+  setTimeout(close, action ? 7000 : 4500);
+}
+function notifyChanges(){
+  for (const it of state.items) {
+    const before = prevStatus.get(it.id);
+    if (!firstState && before && before !== it.status) {
+      const name = it.filename || it.url;
+      if (it.status === 'completed') toast('Téléchargement terminé', name, 'ok', {label:'Ouvrir', fn:() => api.open_file(it.id)});
+      if (it.status === 'error') toast('Échec du téléchargement', it.error || name, 'err', {label:'Réessayer', fn:() => api.resume(it.id).then(refresh)});
+    }
+    prevStatus.set(it.id, it.status);
+  }
+  firstState = false;
+}
+
+/* ======================= actions ======================= */
+async function refresh(){
+  try {
+    state = await api.get_state();
+    hist.push(state.totalSpeed); hist.shift();
+    notifyChanges(); render();
+  } catch (e) { console.error(e); }
+}
+async function addUrl(url){
+  url = (url || '').trim();
+  if (!url) { $('#url').focus(); return; }
+  const r = await api.add(url, Number($('#conn').value));
+  if (!r.ok) { toast('Lien invalide', r.error, 'err'); return; }
+  $('#url').value = '';
+  if (url === lastClip) $('#clip').hidden = true;
+  if (filter === 'completed' || filter === 'error' || filter === 'paused') { filter = 'all'; cat = null; }
+  toast('Ajouté à la liste', hostOf(url));
+  refresh();
+}
+async function checkClipboard(){
+  if (!api || !api.read_clipboard) return;
+  const u = await api.read_clipboard();
+  if (u && u !== lastClip && !state.items.some(i => i.url === u)) {
+    lastClip = u; $('#clipUrl').textContent = u; $('#clip').hidden = false;
+  }
+}
+function openModal(id){ $(id).classList.add('on'); }
+function closeModals(){ document.querySelectorAll('.modal.on').forEach(m => m.classList.remove('on')); }
+
+function bind(){
+  $('#btnAdd').onclick = () => addUrl($('#url').value);
+  $('#url').addEventListener('keydown', e => { if (e.key === 'Enter') addUrl($('#url').value); });
+  $('#clipUse').onclick = () => addUrl(lastClip);
+  $('#clipDismiss').onclick = () => $('#clip').hidden = true;
+  $('#search').addEventListener('input', e => { query = e.target.value; render(); });
+  $('#resumeAll').onclick = () => api.resume_all().then(refresh);
+  $('#pauseAll').onclick = () => api.pause_all().then(refresh);
+  $('#clearDone').onclick = async () => { const n = await api.clear_completed(); toast(n ? `${n} terminé${n > 1 ? 's' : ''} retiré${n > 1 ? 's' : ''} de la liste` : 'Aucun téléchargement terminé à retirer', n ? 'Les fichiers restent sur le disque' : ''); refresh(); };
+
+  $('#list').addEventListener('click', async e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const id = b.closest('.item').dataset.id, it = state.items.find(i => i.id === id); if (!it) return;
+    if (b.dataset.act === 'toggle') {
+      if (it.status === 'completed') { if (!(await api.open_file(id))) toast('Fichier introuvable', 'Il a peut-être été déplacé ou supprimé', 'err'); }
+      else if (['paused', 'error'].includes(it.status)) await api.resume(id);
+      else await api.pause(id);
+    } else if (b.dataset.act === 'folder') api.open_folder(id);
+    else if (b.dataset.act === 'remove') {
+      removeId = id; $('#removeName').textContent = it.filename || it.url; $('#removeFiles').checked = false; openModal('#removeModal');
+    }
+    refresh();
+  });
+  $('#list').addEventListener('dblclick', e => {
+    const el = e.target.closest('.item'); if (!el || e.target.closest('button')) return;
+    const it = state.items.find(i => i.id === el.dataset.id);
+    if (it && it.status === 'completed') api.open_file(it.id);
+  });
+  $('#confirmRemove').onclick = async () => { await api.remove(removeId, $('#removeFiles').checked); closeModals(); refresh(); };
+
+  // paramètres
+  // extension navigateur
+  $('#btnExt').onclick = openExtModal;
+  $('#emptyExt').onclick = openExtModal;
+  $('#browserTabs').addEventListener('click', e => { const b = e.target.closest('button'); if (b) selectBrowser(b.dataset.b); });
+  $('#openExtPage').onclick = async () => { const page = await api.open_browser_extensions(curBrowser); if (page) toast('Adresse à ouvrir dans ' + BROWSERS[curBrowser].name, page); };
+  $('#copyExtUrl').onclick = async () => { try { await navigator.clipboard.writeText(BROWSERS[curBrowser].url); toast('Adresse copiée', BROWSERS[curBrowser].url); } catch { toast('Copie impossible', 'Sélectionnez l\'adresse et copiez-la', 'err'); } };
+  $('#openExtFolder').onclick = async () => { if (!(await api.open_extension_folder())) toast('Dossier introuvable', 'Relancez Varika Download', 'err'); };
+
+  $('#btnSettings').onclick = () => {
+    const s = state.settings;
+    $('#setDest').value = s.dest || ''; $('#setConn').value = s.connections; $('#setPar').value = s.max_parallel;
+    $('#setConnVal').textContent = s.connections; $('#setParVal').textContent = s.max_parallel;
+    $('#setShow').checked = s.show_on_add !== false;
+    $('#version').textContent = 'Varika Download ' + (state.version || '');
+    openModal('#settingsModal');
+  };
+  $('#setConn').oninput = e => $('#setConnVal').textContent = e.target.value;
+  $('#setPar').oninput = e => $('#setParVal').textContent = e.target.value;
+  $('#browse').onclick = async () => { const p = await api.choose_folder(); if (p) $('#setDest').value = p; };
+  $('#saveSettings').onclick = async () => {
+    const s = await api.save_settings({dest: $('#setDest').value.trim(), connections: Number($('#setConn').value), max_parallel: Number($('#setPar').value), show_on_add: $('#setShow').checked});
+    $('#conn').value = s.connections; closeModals(); toast('Paramètres enregistrés', s.dest); refresh(); updateDisk();
+  };
+  document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
+  document.querySelectorAll('.modal').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) closeModals(); }));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModals();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); $('#url').focus(); }
+  });
+
+  // glisser-déposer d'un lien
+  let depth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); depth++; $('#dropzone').classList.add('on'); });
+  window.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; $('#dropzone').classList.remove('on'); } });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault(); depth = 0; $('#dropzone').classList.remove('on');
+    const t = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split('\n').find(l => /^https?:\/\//i.test(l.trim()));
+    if (t) addUrl(t.trim()); else toast('Ce n\'est pas un lien', 'Glissez un lien http(s) depuis le navigateur', 'err');
+  });
+  window.addEventListener('focus', checkClipboard);
+}
+const BROWSERS = {
+  chrome: {name:'Chrome', url:'chrome://extensions', dev:'Interrupteur en haut à droite de la page.', load:'Charger l\'extension non empaquetée'},
+  edge:   {name:'Edge',   url:'edge://extensions',   dev:'Interrupteur dans le panneau de gauche (en bas).', load:'Charger l\'extension décompressée'},
+  opera:  {name:'Opera',  url:'opera://extensions',  dev:'Bouton en haut à droite de la page.', load:'Charger l\'extension non empaquetée'},
+  brave:  {name:'Brave',  url:'brave://extensions',  dev:'Interrupteur en haut à droite de la page.', load:'Charger l\'extension non empaquetée'},
+};
+let curBrowser = 'chrome';
+function selectBrowser(b){
+  curBrowser = b; const B = BROWSERS[b];
+  document.querySelectorAll('#browserTabs button').forEach(x => x.classList.toggle('active', x.dataset.b === b));
+  $('#extUrl').textContent = B.url; $('#openExtLbl').textContent = 'Ouvrir ' + B.name;
+  $('#devModeHint').textContent = B.dev; $('#loadLabel').textContent = `Cliquez sur « ${B.load} »`;
+}
+function renderExtStatus(){
+  const x = state.extension || {};
+  const el = $('#extStatus');
+  let cls = '', ic = 'puzzle', title, sub;
+  if (x.server === false) { cls = 'err'; ic = 'alert'; title = 'Le port ' + x.port + ' est occupé'; sub = 'Une autre copie de Varika Download, ou un autre logiciel, l\'utilise. Fermez-la puis relancez.'; }
+  else if (x.connected) { cls = 'on'; ic = 'check'; title = 'Extension connectée' + (x.browser ? ' (' + x.browser + ')' : ''); sub = 'Dernier contact : ' + new Date(x.lastSeen * 1000).toLocaleString('fr-FR', {dateStyle:'medium', timeStyle:'short'}); }
+  else { title = 'Extension pas encore installée'; sub = 'Suivez les 4 étapes ci-dessous, une seule fois par navigateur.'; }
+  el.className = 'ext-status ' + cls;
+  el.innerHTML = icon(ic) + `<div><b>${esc(title)}</b><span>${esc(sub)}</span></div>`;
+  $('#extFolder').textContent = x.folder || '(dossier créé au premier lancement)';
+  $('#extFolder').title = x.folder || '';
+}
+function openExtModal(){
+  const b = (state.extension && state.extension.browser || '').toLowerCase();
+  selectBrowser(BROWSERS[b] ? b : curBrowser);
+  renderExtStatus(); openModal('#extModal');
+}
+
+async function updateDisk(){
+  if (!api.free_space) return;
+  const f = await api.free_space();
+  $('#disk').textContent = f != null ? fmtSize(f) + ' libres' : '';
+}
+
+async function start(a){
+  if (api) return;
+  api = a;
+  let opts = ''; for (let i = 1; i <= 32; i++) opts += `<option value="${i}">${i}</option>`;
+  $('#conn').innerHTML = opts;
+  buildNav(); bind();
+  await refresh();
+  $('#conn').value = state.settings.connections || 8;
+  updateDisk(); setInterval(updateDisk, 30000);
+  setInterval(refresh, 500);
+  checkClipboard();
+  $('#url').focus();
+}
+
+/* ======================= mode démo (aperçu dans un navigateur) ======================= */
+class DemoApi {
+  constructor(){
+    this.s = {dest:'C:\\Users\\Vous\\Downloads', connections:8, max_parallel:3};
+    const now = Date.now() / 1000;
+    const demo = [
+      ['ubuntu-24.04.1-desktop-amd64.iso', 'https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso', 6.1e9, 'downloading', .42, 8],
+      ['blender-4.2.3-windows-x64.msi', 'https://download.blender.org/release/Blender4.2/blender-4.2.3-windows-x64.msi', 3.4e8, 'downloading', .71, 6],
+      ['Cours-Laravel-complet.mp4', 'https://cdn.exemple.com/videos/Cours-Laravel-complet.mp4', 1.3e9, 'paused', .31, 8],
+      ['Live-Session-Antananarivo.flac', 'https://music.exemple.mg/Live-Session-Antananarivo.flac', 4.1e8, 'completed', 1, 4],
+      ['rapport-annuel-2026.pdf', 'https://docs.exemple.com/rapport-annuel-2026.pdf', 1.6e7, 'completed', 1, 1],
+      ['Conference-Madagascar-Tech-2026.mp4', 'https://cdn.exemple.mg/live/conference/master.m3u8', 7.4e8, 'downloading', .55, 8],
+      ['assets-pack-ui.zip', 'https://files.exemple.com/assets-pack-ui.zip', 8.9e8, 'queued', 0, 8],
+      ['shooting-produit.psd', 'https://share.exemple.com/shooting-produit.psd', 2.2e8, 'error', .12, 4],
+    ];
+    this.items = demo.map(([f, u, t, st, p, n], i) => ({
+      id:'d' + i, url:u, filename:f, total:t, status:st, connections:n, error: st === 'error' ? 'HTTP 403 Forbidden' : null,
+      added: now - i * 3600 * 7, segs: this.makeSegs(n, p), speed:0, kind: u.endsWith('.m3u8') ? 'hls' : 'file', variant: u.endsWith('.m3u8') ? '1920x1080' : null,
+    }));
+  }
+  makeSegs(n, p){
+    return Array.from({length:n}, (_, i) => { const s = i / n, e = (i + 1) / n; return [s, e, s + (e - s) * Math.min(1, p * (0.7 + Math.random() * 0.6))]; });
+  }
+  step(){
+    let running = 0;
+    for (const it of this.items) {
+      if (it.status === 'queued' && running < this.s.max_parallel) it.status = 'downloading';
+      if (it.status !== 'downloading') { it.speed = 0; continue; }
+      running++;
+      let speed = 0;
+      for (const sg of it.segs) {
+        const inc = Math.min(sg[1] - sg[2], (1.1e6 + Math.random() * 1.4e6) * .5 / it.total);
+        sg[2] += inc; speed += inc * it.total / .5;
+      }
+      it.speed = it.speed ? it.speed * .7 + speed * .3 : speed;
+      // segmentation dynamique simulée
+      const done = it.segs.filter(s => s[2] >= s[1]).length, big = it.segs.reduce((a, b) => (b[1] - b[2] > a[1] - a[2] ? b : a));
+      if (done && big[1] - big[2] > .02) { const mid = big[2] + (big[1] - big[2]) / 2; it.segs.push([mid, big[1], mid]); big[1] = mid; }
+      if (it.segs.every(s => s[2] >= s[1] - 1e-9)) { it.status = 'completed'; it.speed = 0; }
+    }
+  }
+  view(it){
+    const prog = it.status === 'completed' ? 1 : it.segs.reduce((a, s) => a + (s[2] - s[0]), 0);
+    const active = it.segs.filter(s => s[2] < s[1]).length;
+    return {id:it.id, url:it.url, filename:it.filename, path:null, total:it.total, downloaded:prog * it.total, progress:prog,
+      speed:it.speed, eta: it.speed ? (1 - prog) * it.total / it.speed : null, status:it.status, error:it.error,
+      active: Math.min(active, it.connections), connections:it.connections, resumable:true,
+      segments: it.status === 'completed' ? [] : it.segs.map(s => s.slice()), added:it.added, kind: it.kind, variant: it.variant};
+  }
+  async get_state(){ this.step(); const items = this.items.map(i => this.view(i));
+    return {items, totalSpeed: items.reduce((a, i) => a + (i.speed || 0), 0), settings:this.s, version:'1.1.0 (démo)',
+      extension:{connected:true, lastSeen:Date.now()/1000 - 120, browser:'Chrome', server:true, port:47821, folder:'C:\\Users\\Vous\\AppData\\Roaming\\Varika Download\\extension'}}; }
+  async add(url, n){ if (!/^https?:\/\//i.test(url)) return {ok:false, error:'Le lien doit commencer par http:// ou https://'};
+    const f = decodeURIComponent(url.split('?')[0].split('/').pop() || 'telechargement');
+    this.items.unshift({id:'n' + Date.now(), url, filename:f, total:(2 + Math.random() * 8) * 1e8, status:'queued', connections:n || 8, added:Date.now() / 1000, segs:this.makeSegs(n || 8, 0), speed:0});
+    return {ok:true}; }
+  find(id){ return this.items.find(i => i.id === id); }
+  async pause(id){ const i = this.find(id); if (i && ['downloading','queued','probing'].includes(i.status)) i.status = 'paused'; }
+  async resume(id){ const i = this.find(id); if (i && ['paused','error'].includes(i.status)) { i.status = 'queued'; i.error = null; } }
+  async pause_all(){ this.items.forEach(i => this.pause(i.id)); }
+  async resume_all(){ this.items.forEach(i => this.resume(i.id)); }
+  async remove(id){ this.items = this.items.filter(i => i.id !== id); }
+  async clear_completed(){ const n = this.items.filter(i => i.status === 'completed').length; this.items = this.items.filter(i => i.status !== 'completed'); return n; }
+  async open_file(){ toast('Mode démo', 'Dans l\'application, le fichier s\'ouvrirait ici'); return true; }
+  async open_folder(){ toast('Mode démo', 'Dans l\'application, l\'Explorateur s\'ouvrirait ici'); }
+  async choose_folder(){ return null; }
+  async save_settings(s){ Object.assign(this.s, s); return this.s; }
+  async read_clipboard(){ return this.clipOnce ? '' : (this.clipOnce = true, 'https://download.exemple.com/setup-photoshop-portable.zip'); }
+  async free_space(){ return 182.4e9; }
+  async open_extension_folder(){ toast('Mode démo', 'Dans l\'application, le dossier de l\'extension s\'ouvrirait ici'); return true; }
+  async open_browser_extensions(b){ return BROWSERS[b].url; }
+}
+
+window.addEventListener('pywebviewready', () => start(window.pywebview.api));
+if (window.pywebview && window.pywebview.api && window.pywebview.api.get_state) start(window.pywebview.api);
+const demo = new URLSearchParams(location.search).has('demo') || location.protocol === 'file:';
+if (demo) setTimeout(() => { if (!api) { document.body.insertAdjacentHTML('beforeend', '<div class="demo">Aperçu de démonstration</div>'); start(new DemoApi()); } }, 1500);
+</script>
+</body>
+</html>

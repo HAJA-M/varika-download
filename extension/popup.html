@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{--bg:#0b0c0b;--surface:#141714;--border:#252a25;--text:#eef1ea;--muted:#959e91;--faint:#646d61;--lime:#BFFE6F;--ink:#0A0B0A;--err:#f04461}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:320px;background:var(--bg);color:var(--text);font:13px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}
+  header img{width:32px;height:32px;border-radius:8px}
+  header b{font-size:14.5px;display:block}
+  header small{color:var(--muted);font-size:11.5px}
+  .status{display:flex;align-items:center;gap:8px;margin:12px 16px 4px;padding:9px 12px;border-radius:10px;background:var(--surface);border:1px solid var(--border);color:var(--muted)}
+  .status i{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+  .status.on i{background:var(--lime);box-shadow:0 0 8px var(--lime)}
+  .status.on{color:var(--text)}
+  .status.off i{background:var(--err)}
+  section{padding:8px 16px 4px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:0}
+  .row span{line-height:1.35}
+  .row span small{display:block;color:var(--faint);font-size:11.5px}
+  .switch{position:relative;width:38px;height:22px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .switch b{position:absolute;inset:0;background:#2b312a;border-radius:99px;cursor:pointer;transition:.2s}
+  .switch b::before{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;background:#cfd5cb;border-radius:50%;transition:.2s}
+  .switch input:checked+b{background:var(--lime)}
+  .switch input:checked+b::before{transform:translateX(16px);background:var(--ink)}
+  label.field{display:block;color:var(--muted);font-size:12px;margin:10px 0 6px}
+  textarea,input[type=number]{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:9px;color:var(--text);font:inherit;padding:8px 10px;outline:0;resize:none}
+  textarea:focus,input[type=number]:focus{border-color:var(--lime)}
+  textarea:disabled{opacity:.45}
+  .inline{display:flex;align-items:center;gap:8px}
+  .inline input{width:80px}
+  footer{padding:12px 16px 16px}
+  button{width:100%;height:38px;border:0;border-radius:10px;background:linear-gradient(135deg,var(--lime),#93E84A);color:var(--ink);font-weight:600;font-size:13.5px;font-family:inherit;cursor:pointer}
+  button:hover{filter:brightness(1.06)}
+  .hint{color:var(--faint);font-size:11.5px;line-height:1.45;margin-top:10px;text-align:center}
+  .media{margin:10px 16px 2px}
+  .media h4{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);margin-bottom:6px;font-weight:600}
+  .m-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);margin-bottom:6px}
+  .m-item span{flex:1;font-size:12.5px;line-height:1.35;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .m-item select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:7px;font-size:12px;padding:3px}
+  .m-item button{width:auto;height:28px;padding:0 10px;font-size:12px;border-radius:8px}
+  .m-empty{font-size:12px;color:var(--faint);line-height:1.45}
+</style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-128.png" alt="">
+    <div><b>Varika Download</b><small>Extension navigateur</small></div>
+  </header>
+  <div class="status" id="status"><i></i><span>Recherche du logiciel…</span></div>
+  <div class="media"><h4>Vidéos sur cette page</h4><div id="media"><div class="m-empty">Recherche…</div></div></div>
+  <section>
+    <div class="row">
+      <span>Capturer les téléchargements<small>Envoyer les fichiers à Varika Download</small></span>
+      <label class="switch"><input type="checkbox" id="enabled"><b></b></label>
+    </div>
+    <div class="row">
+      <span>Tous les types de fichiers<small>Sinon : seulement les extensions ci-dessous</small></span>
+      <label class="switch"><input type="checkbox" id="allFiles"><b></b></label>
+    </div>
+    <label class="field" for="exts">Extensions capturées</label>
+    <textarea id="exts" rows="3" spellcheck="false"></textarea>
+    <label class="field" for="minSize">Taille minimale</label>
+    <div class="inline"><input type="number" id="minSize" min="0" step="1"><span style="color:var(--muted)">Mo (0 = tout)</span></div>
+  </section>
+  <footer>
+    <button id="open">Ouvrir Varika Download</button>
+    <div class="hint">Astuce : clic droit sur un lien, une image ou une vidéo → « Télécharger avec Varika Download ».</div>
+  </footer>
+<script src="popup.js"></script>
+</body>
+</html>

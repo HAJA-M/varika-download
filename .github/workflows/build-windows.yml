@@ -1,0 +1,29 @@
+name: Build Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dépendances
+        run: python -m pip install -r requirements.txt
+      - name: Compiler VarikaDownload.exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name VarikaDownload --icon assets\varika-download.ico --add-data "ui;ui" --add-data "extension;extension" --version-file version_info.txt app.py
+      - name: Créer l'installateur
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VarikaDownload-windows
+          path: |
+            dist/VarikaDownload.exe
+            dist/Setup-VarikaDownload-*.exe
