@@ -112,16 +112,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" \
-            --title "Varika Download ${{ github.ref_name }}" --generate-notes
+          # relançable sans erreur : si la Release existe déjà, les fichiers sont remplacés
+          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" \
+              --title "Varika Download ${{ github.ref_name }}" --generate-notes
+          gh release upload "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" --clobber
       - name: Copie dans le dépôt public des mises à jour (facultatif)
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           PUBLIC_REPO: ${{ vars.UPDATE_REPO || 'HAJA-M/varika-download-releases' }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "::notice::Secret RELEASES_TOKEN absent : les logiciels installés lisent les mises à jour dans $PUBLIC_REPO, pensez à l'ajouter."
+            echo "::warning::Secret RELEASES_TOKEN absent : les logiciels installés lisent les mises à jour dans $PUBLIC_REPO, pensez à l'ajouter."
             exit 0
           fi
-          gh release create "${{ github.ref_name }}" dist/* --repo "$PUBLIC_REPO" \
-            --title "Varika Download ${{ github.ref_name }}" --notes "Mise à jour automatique de Varika Download ${{ github.ref_name }}."
+          gh release view "${{ github.ref_name }}" --repo "$PUBLIC_REPO" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" --repo "$PUBLIC_REPO" \
+              --title "Varika Download ${{ github.ref_name }}" --notes "Mise à jour automatique de Varika Download ${{ github.ref_name }}."
+          gh release upload "${{ github.ref_name }}" dist/* --repo "$PUBLIC_REPO" --clobber
