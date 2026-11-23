@@ -32,9 +32,18 @@ final class Publisher {
         return m != null ? m : "application/octet-stream";
     }
 
-    static void publish(Context c, Task t) {
-        File f = t.path;
+    static void publish(Context c, final Task t) {
+        final File f = t.path;
         if (f == null || !f.isFile()) return;
+        if (VarikaApp.directStorage && f.getPath().contains("/Download/")) {
+            // Déjà au bon endroit : on demande seulement à Android de l'indexer (galerie, Fichiers…)
+            android.media.MediaScannerConnection.scanFile(c, new String[]{f.getPath()}, new String[]{mime(f.getName())},
+                    (path, uri) -> {
+                        if (uri != null) t.publishedUri = uri.toString();
+                        if (VarikaApp.manager() != null) VarikaApp.manager().markDirty();
+                    });
+            return;
+        }
         ContentResolver cr = c.getContentResolver();
         ContentValues v = new ContentValues();
         v.put(MediaStore.Downloads.DISPLAY_NAME, f.getName());
@@ -93,6 +102,7 @@ final class Publisher {
 
     /** Supprime un fichier publié (quand l'utilisateur retire un téléchargement avec suppression). */
     static void unpublish(Context c, Task t) {
+        if (t.path != null && t.path.isFile() && !t.path.delete()) t.path.deleteOnExit();
         if (t.publishedUri == null) return;
         try {
             c.getContentResolver().delete(Uri.parse(t.publishedUri), null, null);

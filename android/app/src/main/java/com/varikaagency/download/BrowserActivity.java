@@ -30,6 +30,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import com.varikaagency.download.core.Mp4;
 import com.varikaagency.download.core.Net;
 
 import java.util.ArrayList;
@@ -127,6 +128,7 @@ public class BrowserActivity extends Activity {
                 pageUrl = url;
                 address.setText(url);
                 synchronized (media) { media.clear(); }
+                synchronized (tracks) { tracks.clear(); }
                 refreshButton();
             }
 
@@ -175,15 +177,37 @@ public class BrowserActivity extends Activity {
         web.loadUrl(t);
     }
 
-    private void consider(String url, String accept) {
-        if (!url.startsWith("http")) return;
-        if (isBlocked(Net.host(url)) || isBlocked(Net.host(pageUrl))) return;
+    private static final Pattern DASH_HOSTS = Pattern.compile("(^|.*\\.)(fbcdn\\.net|cdninstagram\\.com|fbsbx\\.com)$");
+    /** Pistes séparées image / son (Facebook…) : adresse nettoyée -> analyse (piste, hauteur, taille). */
+    private final Map<String, Mp4.Info> tracks = new LinkedHashMap<String, Mp4.Info>();
+
+    private void consider(String rawUrl, String accept) {
+        if (!rawUrl.startsWith("http")) return;
+        if (isBlocked(Net.host(rawUrl)) || isBlocked(Net.host(pageUrl))) return;
+        // Les lecteurs adaptatifs demandent des morceaux (…&bytestart=0&byteend=399999) : on veut le fichier entier
+        String[] norm = Mp4.normalize(rawUrl);
+        final String url = norm[0];
+        boolean fragment = "true".equals(norm[1]);
         String path = url.split("[?#]")[0].toLowerCase(Locale.ROOT);
         if (SEGMENT.matcher(path).matches()) return;
         String type;
         if (path.endsWith(".m3u8")) type = "hls";
         else if (MEDIA.matcher(path).matches()) type = path.matches(".*\\.(mp3|m4a|ogg|opus|wav|flac)$") ? "audio" : "video";
         else return;
+        boolean dash = !"hls".equals(type) && (fragment || DASH_HOSTS.matcher(Net.host(url).toLowerCase(Locale.ROOT)).matches());
+        if (dash) {
+            synchronized (tracks) {
+                if (tracks.containsKey(url)) return;
+                tracks.put(url, new Mp4.Info());
+            }
+            final Map<String, String> h = headersFor(url);
+            new Thread(() -> {                         // quelle piste ? (image ou son, hauteur)
+                Mp4.Info info = Mp4.sniff(url, h);
+                synchronized (tracks) { tracks.put(url, info); }
+                refreshButton();
+            }).start();
+            return;
+        }
         synchronized (media) {
             if (media.containsKey(url)) return;
             // une playlist fille d'une playlist maître déjà vue n'est pas proposée en double
@@ -193,53 +217,88 @@ public class BrowserActivity extends Activity {
         refreshButton();
     }
 
+    private Map<String, String> headersFor(String url) {
+        Map<String, String> h = new LinkedHashMap<String, String>();
+        h.put("Referer", pageUrl);
+        h.put("User-Agent", web.getSettings().getUserAgentString());
+        String cookies = CookieManager.getInstance().getCookie(url);
+        if (cookies != null) h.put("Cookie", cookies);
+        return h;
+    }
+
+    /** Un choix proposé à l'utilisateur. */
+    private static final class Choice {
+        String label, url, audio, kind;
+    }
+
+    private List<Choice> choices() {
+        List<Choice> out = new ArrayList<Choice>();
+        String bestVideo = null, bestAudio = null;
+        int bestH = -1;
+        long bestA = -1;
+        synchronized (tracks) {
+            for (Map.Entry<String, Mp4.Info> e : tracks.entrySet()) {
+                Mp4.Info i = e.getValue();
+                if ("video".equals(i.track) && i.height > bestH) { bestH = i.height; bestVideo = e.getKey(); }
+                if ("audio".equals(i.track) && i.size > bestA) { bestA = i.size; bestAudio = e.getKey(); }
+            }
+        }
+        if (bestVideo != null) {
+            Choice c = new Choice();
+            c.url = bestVideo;
+            c.audio = bestAudio;
+            c.kind = bestAudio != null ? "dash" : null;
+            c.label = "Vidéo" + (bestH > 0 ? " " + bestH + "p" : "") + (bestAudio != null ? " + son" : " (sans son)");
+            out.add(c);
+        }
+        synchronized (media) {
+            for (Map.Entry<String, String> e : media.entrySet()) {
+                Choice c = new Choice();
+                c.url = e.getKey();
+                c.kind = "hls".equals(e.getValue()) ? "hls" : null;
+                String name = e.getKey().split("[?#]")[0];
+                name = name.substring(name.lastIndexOf('/') + 1);
+                c.label = ("hls".equals(e.getValue()) ? "Streaming (meilleure qualité)" : "audio".equals(e.getValue()) ? "Audio" : "Vidéo")
+                        + " · " + TextUtils.ellipsize(name, new android.text.TextPaint(), 600, TextUtils.TruncateAt.MIDDLE);
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
     private void refreshButton() {
         main.post(() -> {
-            int n;
-            synchronized (media) { n = media.size(); }
+            int n = choices().size();
             found.setVisibility(n > 0 ? View.VISIBLE : View.GONE);
             found.setText(n == 1 ? getString(R.string.download_video) : getString(R.string.download_n, n));
         });
     }
 
     private void choose() {
-        final List<String> urls = new ArrayList<String>();
-        List<String> labels = new ArrayList<String>();
-        synchronized (media) {
-            for (Map.Entry<String, String> e : media.entrySet()) {
-                urls.add(e.getKey());
-                String name = e.getKey().split("[?#]")[0];
-                name = name.substring(name.lastIndexOf('/') + 1);
-                labels.add(("hls".equals(e.getValue()) ? "Streaming (meilleure qualité)" : "audio".equals(e.getValue()) ? "Audio" : "Vidéo")
-                        + " · " + TextUtils.ellipsize(name, new android.text.TextPaint(), 600, TextUtils.TruncateAt.MIDDLE));
-            }
-        }
-        if (urls.size() == 1) {
-            send(urls.get(0));
+        final List<Choice> list = choices();
+        if (list.isEmpty()) return;
+        if (list.size() == 1) {
+            send(list.get(0));
             return;
         }
+        String[] labels = new String[list.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = list.get(i).label;
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle(R.string.choose_media)
-                .setItems(labels.toArray(new String[0]), (d, which) -> send(urls.get(which)))
+                .setItems(labels, (d, which) -> send(list.get(which)))
                 .show();
     }
 
-    private void send(final String url) {
+    private void send(final Choice c) {
         final String title = web.getTitle();
-        final String referer = pageUrl;
-        final String ua = web.getSettings().getUserAgentString();
-        final String cookies = CookieManager.getInstance().getCookie(url);
-        final String type;
-        synchronized (media) { type = media.get(url); }
+        final Map<String, String> h = headersFor(c.url);
         Toast.makeText(this, R.string.sending, Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            Map<String, String> h = new LinkedHashMap<String, String>();
-            h.put("Referer", referer);
-            h.put("User-Agent", ua);
-            if (cookies != null) h.put("Cookie", cookies);
-            // vidéo en streaming : nommée d'après le titre de la page ; fichier direct : nom donné par le serveur
-            String name = "hls".equals(type) && title != null && !title.trim().isEmpty() ? Net.safeName(title.trim()) + ".mp4" : null;
-            Map<String, Object> r = VarikaApp.manager().add(url, null, name, h, true, "hls".equals(type) ? "hls" : null, null);
+            // vidéo en streaming ou image + son : nommée d'après le titre de la page (sans le compteur « (19) »)
+            String t = title == null ? "" : title.replaceFirst("^\\(\\d+\\+?\\)\\s*", "").trim();
+            String name = c.kind != null && !t.isEmpty() ? Net.safeName(t) + ".mp4" : null;
+            Map<String, Object> r = VarikaApp.manager().add(c.url, null, name, h, true, c.kind, null, c.audio);
+            MainActivity.askIfMetered(this, r);
             main.post(() -> {
                 if (Boolean.TRUE.equals(r.get("ok"))) {
                     Toast.makeText(this, getString(R.string.added, String.valueOf(r.get("filename"))), Toast.LENGTH_LONG).show();

@@ -105,6 +105,14 @@ class H(BaseHTTPRequestHandler):
                 self.end_headers()
                 return
             return self._file(DATA, 'attachment; filename="signe.bin"')
+        if p == "/page":                        # une page web, pas un fichier
+            body = b"<!doctype html><html><body>Page</body></html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if p == "/live.m3u8":
             body = b"#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2,\nseg100.ts\n#EXTINF:2,\nseg101.ts\n"
             self.send_response(200)
@@ -191,9 +199,10 @@ def B12():
 
 
 def B13():
-    """Connexion coupée en plein téléchargement sans reprise possible -> erreur, pas « en pause »."""
+    """Connexion coupée sans reprise possible -> erreur ou attente réseau signalée, jamais « en pause » muet."""
     d = dl("/short")
-    assert d.status == ERROR, (d.status, d.error)
+    # 1.4 : une coupure n'est plus une erreur définitive, le téléchargement attend le réseau et reprend seul
+    assert d.status in (ERROR, engine.WAITING) and d.error, (d.status, d.error)
 
 
 def B14():
@@ -324,7 +333,13 @@ def C1():
     assert isinstance(d, hls.HlsDownload)
 
 
-TESTS = [B1, B2, B3, B5, B12, B13, B14, B19, B31, H1, A22, A23, A39, A44, X47, C1]
+def W1():
+    """Un lien vers une page web ne doit pas enregistrer la page HTML comme un « fichier »."""
+    d = dl("/page")
+    assert d.status == ERROR and "page web" in (d.error or ""), (d.status, d.error)
+
+
+TESTS = [W1, B1, B2, B3, B5, B12, B13, B14, B19, B31, H1, A22, A23, A39, A44, X47, C1]
 
 if __name__ == "__main__":
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)

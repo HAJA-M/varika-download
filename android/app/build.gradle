@@ -4,18 +4,27 @@ plugins {
 
 android {
     namespace 'com.varikaagency.download'
-    compileSdk 34
+    compileSdk 35
 
     defaultConfig {
         applicationId 'com.varikaagency.download'
         minSdk 29            // Android 10+ : enregistrement dans « Téléchargements » sans permission de stockage
         targetSdk 34
-        versionCode 4
-        versionName '1.3.0'
+        versionCode 10400
+        versionName '1.4.0'
     }
 
     // Signature de la version « release » : fournie par les secrets GitHub (voir README)
     signingConfigs {
+        // Clé « test » commune à toutes les compilations : chaque nouvelle version s'installe
+        // par-dessus la précédente (Android exige la même signature). Pour le Play Store, utilisez
+        // votre propre clé « release » (secrets GitHub, voir README).
+        test {
+            storeFile file("$rootDir/keystore/varika-test.jks")
+            storePassword 'varika-test'
+            keyAlias 'varika-test'
+            keyPassword 'varika-test'
+        }
         release {
             def ks = System.getenv('VARIKA_KEYSTORE')
             if (ks) {
@@ -28,10 +37,19 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.test
+        }
         release {
             minifyEnabled false
-            if (System.getenv('VARIKA_KEYSTORE')) signingConfig signingConfigs.release
+            signingConfig System.getenv('VARIKA_KEYSTORE') ? signingConfigs.release : signingConfigs.test
         }
+    }
+
+    // Le « lint » n'empêche pas la compilation en CI (les avertissements restent dans le rapport)
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
     }
 
     compileOptions {

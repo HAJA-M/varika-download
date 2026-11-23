@@ -107,6 +107,15 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 .pill.downloading{color:var(--accent);background:rgba(191,254,111,.13)}
 .pill.probing,.pill.queued,.pill.assembling{color:var(--muted);background:rgba(138,150,174,.12)}
 .pill.paused{color:var(--warn);background:rgba(245,165,36,.12)}
+.pill.waiting{color:#7cc4ff;background:rgba(124,196,255,.12)}
+.pill.waiting::before{animation:pulse 2s infinite}
+.banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:10px 14px;border-radius:12px;border:1px solid rgba(191,254,111,.28);background:rgba(191,254,111,.07);font-size:13px}
+.banner.warn{border-color:rgba(245,165,36,.35);background:rgba(245,165,36,.08)}
+.banner .t{flex:1;min-width:180px}.banner .t b{display:block}.banner .t span{color:var(--muted)}
+.banner .bar{height:4px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:6px}
+.banner .bar i{display:block;height:100%;background:var(--accent)}
+.netchip{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:rgba(138,150,174,.12);color:var(--muted);white-space:nowrap}
+.netchip.off{color:var(--err);background:rgba(240,68,97,.13)}.netchip.wifi{color:var(--ok);background:rgba(34,197,94,.12)}.netchip.cell{color:var(--warn);background:rgba(245,165,36,.12)}
 .pill.completed{color:var(--ok);background:rgba(34,197,94,.12)}
 .pill.error{color:var(--err);background:rgba(240,68,97,.13)}
 .pill.downloading::before{animation:pulse 1.2s infinite}
@@ -187,7 +196,8 @@ main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relati
 .dialog header{display:flex;align-items:center;justify-content:space-between;padding:18px 20px 6px}
 .dialog h3{font-size:16.5px;font-weight:650}
 .dialog .body{padding:8px 20px 4px;display:flex;flex-direction:column;gap:16px}
-.dialog footer{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px 18px}
+.dialog footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;padding:16px 20px 18px}
+#banner{padding:0 28px;flex:none}#banner:empty{display:none}
 .field label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--muted);margin-bottom:7px}
 .field label b{color:var(--text);font-variant-numeric:tabular-nums}
 .path-row{display:flex;gap:8px}
@@ -254,6 +264,8 @@ body.android .desktop-only{display:none !important}
   .topbar{padding:calc(14px + env(safe-area-inset-top)) 18px 0}
   .toolbar{padding:18px 18px 10px}
   .list{padding:4px 18px calc(24px + env(safe-area-inset-bottom))}
+  #banner{padding:0 18px}
+  #btnCheckUpdate{order:-1;flex:1 1 100%}
   .empty{inset:220px 18px 18px}
   .meta{flex-wrap:wrap;white-space:normal;row-gap:2px}
 }
@@ -377,10 +389,18 @@ body.android .desktop-only{display:none !important}
         <label>Téléchargements simultanés <b id="setParVal">3</b></label>
         <input type="range" id="setPar" min="1" max="8">
       </div>
+      <label class="check android-only"><input type="checkbox" id="setWifi" style="accent-color:var(--accent)"> Gros fichiers : télécharger uniquement en Wi-Fi</label>
+      <div class="hint android-only" style="margin:-4px 0 6px 26px">Sur les données mobiles, les téléchargements attendent le Wi-Fi puis reprennent seuls (modifiable fichier par fichier).</div>
+      <label class="check android-only"><input type="checkbox" id="setAutoResume" style="accent-color:var(--accent)"> Reprendre automatiquement quand Internet revient</label>
+      <label class="check"><input type="checkbox" id="setAutoUpdate" style="accent-color:var(--accent)"> Rechercher les mises à jour automatiquement</label>
+      <div class="field android-only" id="batteryField" hidden>
+        <div class="hint">Pour les fichiers de plusieurs Go, autorisez Varika Download à fonctionner sans restriction de batterie : Android ne coupera plus le téléchargement écran éteint.</div>
+        <button class="btn ghost" id="btnBattery" style="margin-top:6px">Ouvrir les réglages de batterie</button>
+      </div>
       <p class="hint android-only">Les fichiers sont enregistrés dans <b>Téléchargements/Varika Download</b> et apparaissent dans l'application Fichiers du téléphone.</p>
       <label class="check desktop-only" style="accent-color:var(--accent)"><input type="checkbox" id="setShow" style="accent-color:var(--accent)"> Afficher la fenêtre quand un téléchargement arrive du navigateur</label>
     </div>
-    <footer><span class="hint" id="version" style="margin-right:auto;align-self:center"></span><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="saveSettings">Enregistrer</button></footer>
+    <footer><span class="hint" id="version" style="margin-right:auto;align-self:center"></span><button class="btn ghost" id="btnCheckUpdate">Rechercher les mises à jour</button><button class="btn ghost" data-close>Annuler</button><button class="btn primary" id="saveSettings">Enregistrer</button></footer>
   </div>
 </div>
 
@@ -476,7 +496,7 @@ const catOf = (n) => { const e = extOf(n); for (const [k, c] of Object.entries(C
 
 const FILTERS = {
   all:       {label:'Tous les téléchargements', short:'Tous',     icon:'all',    test:()=>true},
-  active:    {label:'En cours',                 short:'En cours', icon:'active', test:s=>['downloading','probing','queued','assembling'].includes(s)},
+  active:    {label:'En cours',                 short:'En cours', icon:'active', test:s=>['downloading','probing','queued','assembling','waiting'].includes(s)},
   completed: {label:'Terminés',                 short:'Terminés', icon:'check',  test:s=>s==='completed'},
   paused:    {label:'En pause',                 short:'En pause', icon:'pause',  test:s=>s==='paused'},
   error:     {label:'Erreurs',                  short:'Erreurs',  icon:'alert',  test:s=>s==='error'},
@@ -499,7 +519,7 @@ function fmtTime(s){
 }
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./,''); } catch { return ''; } };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const STATUS_TXT = {queued:'En attente', probing:'Analyse…', downloading:'', paused:'En pause', completed:'Terminé', error:'Erreur', assembling:'Assemblage…'};
+const STATUS_TXT = {queued:'En attente', probing:'Analyse…', downloading:'', paused:'En pause', completed:'Terminé', error:'Erreur', assembling:'Assemblage…', waiting:'Attente réseau'};
 
 /* ======================= état ======================= */
 let api = null, state = {items:[], totalSpeed:0, settings:{}};
@@ -576,6 +596,7 @@ function updateRow(el, it){
   if (it.status === 'completed') parts.push(fmtSize(it.total));
   else parts.push(`${fmtSize(it.downloaded)} / ${it.kind === 'hls' && it.total ? '≈ ' : ''}${fmtSize(it.total)}`);
   if (it.kind === 'hls') parts.push('Streaming' + (it.variant ? ' ' + esc(it.variant) : ''));
+  if (it.kind === 'dash') parts.push('Image + son');
   const host = hostOf(it.url); if (host) parts.push(`<span class="host">${esc(host)}</span>`);
   if (it.status === 'downloading') parts.push(it.kind === 'hls' ? `${it.active} segment${it.active > 1 ? 's' : ''} en parallèle`
     : it.resumable ? `${it.active} connexion${it.active > 1 ? 's' : ''}` : '1 connexion · pas de reprise');
@@ -583,6 +604,7 @@ function updateRow(el, it){
   if (it.status === 'downloading' && it.speed > 0)
     parts.push(`<span class="msp">${fmtSize(it.speed)}/s${it.eta != null ? ' · ' + fmtTime(it.eta) : ''}</span>`);
   if (it.status === 'error' && it.error) parts.push(`<span class="err">${esc(it.error)}</span>`);
+  if (it.status === 'waiting') parts.push(`<span style="color:#7cc4ff">${esc(it.error || 'en attente du réseau')} — reprise automatique</span>`);
   const meta = parts.join('<span class="dot">•</span>');
   setIf(el, 'meta', v => q('.meta').innerHTML = v, meta);
 
@@ -592,7 +614,7 @@ function updateRow(el, it){
   setIf(el, 'speed', v => q('.speed').textContent = v, sp);
   setIf(el, 'eta', v => q('.eta').textContent = v, eta);
 
-  const t = {downloading:['pause','Mettre en pause'], probing:['pause','Mettre en pause'], queued:['pause','Mettre en pause'], assembling:['pause','Assemblage en cours'],
+  const t = {downloading:['pause','Mettre en pause'], probing:['pause','Mettre en pause'], queued:['pause','Mettre en pause'], assembling:['pause','Assemblage en cours'], waiting:['pause','Mettre en pause (reprise auto au retour du réseau)'],
              paused:['play','Reprendre'], error:['retry','Réessayer'], completed:['open','Ouvrir le fichier']}[it.status];
   setIf(el, 'toggle', v => { const b = q('[data-act=toggle]'); b.innerHTML = icon(t[0]); b.title = t[1]; }, t[0]);
 }
@@ -634,12 +656,44 @@ function render(){
   $('#emptyExt').hidden = !(empty && !items.length && !ext.connected);
   if ($('#extModal').classList.contains('on')) renderExtStatus();
 
+  renderBanner();
+
   // débit total + graphique
   $('#totalSpeed').textContent = fmtSize(state.totalSpeed) + '/s';
   $('#mhSpeed').textContent = state.totalSpeed > 0 ? fmtSize(state.totalSpeed) + '/s' : '';
   const act = items.filter(i => i.status === 'downloading').length;
   $('#activeCount').textContent = act ? `${act} actif${act > 1 ? 's' : ''}` : 'Aucun actif';
   drawSpark();
+}
+function renderBanner(){
+  let host = $('#banner');
+  if (!host) { host = document.createElement('div'); host.id = 'banner'; const list = $('#list'); list.parentNode.insertBefore(host, list); }
+  const u = state.update || {}, net = state.network;
+  let h = '';
+  if (u.available || u.status === 'downloading' || u.status === 'installing' || (u.status === 'error' && u.error)) {
+    const busy = u.status === 'downloading' || u.status === 'installing';
+    const pct = Math.round((u.progress || 0) * 100);
+    const sub = u.status === 'error' ? esc(u.error) : busy ? (u.status === 'installing' ? 'Installation…' : `Téléchargement ${pct} % — empreinte SHA-256 vérifiée avant installation`) : 'Une nouvelle version est disponible.';
+    h += `<div class="banner${u.status === 'error' ? ' warn' : ''}"><div class="t"><b>Mise à jour ${esc(u.version || '')}</b><span>${sub}</span>${busy && u.status === 'downloading' ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ''}</div>${busy ? '' : '<button class="btn primary" data-upd>Mettre à jour</button>'}</div>`;
+  }
+  const waiting = state.items.filter(i => i.status === 'waiting').length;
+  if (net && waiting) {
+    const why = !net.available ? 'Pas de connexion Internet : les téléchargements reprendront seuls dès son retour.'
+      : (!net.unmetered && state.settings.wifi_only) ? 'Données mobiles : les gros fichiers attendent le Wi-Fi (réglable dans les Paramètres).' : 'Reconnexion en cours…';
+    h += `<div class="banner warn"><div class="t"><b>${waiting} téléchargement${waiting > 1 ? 's' : ''} en attente du réseau</b><span>${why}</span></div></div>`;
+  }
+  if (host.dataset.h !== h) {
+    host.dataset.h = h; host.innerHTML = h;
+    const b = host.querySelector('[data-upd]');
+    if (b) b.onclick = async () => { await api.install_update(); toast('Mise à jour', 'Téléchargement de la nouvelle version…'); refresh(); };
+  }
+  let chip = $('#netchip');
+  if (net) {
+    if (!chip) { chip = document.createElement('span'); chip.id = 'netchip'; $('#viewTitle').after(chip); }
+    const cls = !net.available ? 'off' : net.unmetered ? 'wifi' : 'cell';
+    chip.className = 'netchip ' + cls;
+    chip.textContent = !net.available ? 'Hors ligne' : net.unmetered ? 'Wi-Fi' : 'Données mobiles';
+  }
 }
 function setCount(k, n){ const el = document.querySelector(`[data-count="${k}"]`); if (el && el.textContent != n) el.textContent = n; }
 
@@ -699,6 +753,7 @@ async function addUrl(url){
   if (!r.ok && r.openBrowser) { toast('Page web détectée', 'Ouverture dans le navigateur vidéo pour trouver le fichier…'); $('#url').value = ''; return; }
   if (!r.ok) { toast('Lien invalide', r.error, 'err'); return; }
   $('#url').value = '';
+  if (r.pending) { toast('Vérification du lien…', hostOf(url)); setTimeout(refresh, 1500); return; }
   if (url === lastClip) $('#clip').hidden = true;
   if (filter === 'completed' || filter === 'error' || filter === 'paused') { filter = 'all'; cat = null; }
   toast('Ajouté à la liste', hostOf(url));
@@ -772,6 +827,9 @@ function bind(){
     $('#setDest').value = s.dest || ''; $('#setConn').value = s.connections; $('#setPar').value = s.max_parallel;
     $('#setConnVal').textContent = s.connections; $('#setParVal').textContent = s.max_parallel;
     $('#setShow').checked = s.show_on_add !== false;
+    $('#setWifi').checked = !!s.wifi_only; $('#setAutoResume').checked = s.auto_resume !== false;
+    $('#setAutoUpdate').checked = s.auto_update !== false;
+    $('#batteryField').hidden = !state.batteryRestricted;
     $('#version').textContent = 'Varika Download ' + (state.version || '');
     openModal('#settingsModal');
   };
@@ -779,9 +837,18 @@ function bind(){
   $('#setPar').oninput = e => $('#setParVal').textContent = e.target.value;
   $('#browse').onclick = async () => { const p = await api.choose_folder(); if (p) $('#setDest').value = p; };
   $('#saveSettings').onclick = async () => {
-    const s = await api.save_settings({dest: $('#setDest').value.trim(), connections: Number($('#setConn').value), max_parallel: Number($('#setPar').value), show_on_add: $('#setShow').checked});
+    const s = await api.save_settings({dest: $('#setDest').value.trim(), connections: Number($('#setConn').value), max_parallel: Number($('#setPar').value), show_on_add: $('#setShow').checked,
+      wifi_only: $('#setWifi').checked, auto_resume: $('#setAutoResume').checked, auto_update: $('#setAutoUpdate').checked});
     if (s.error) { toast('Paramètres non enregistrés', s.error, 'err'); return; }
     $('#conn').value = s.connections; closeModals(); toast('Paramètres enregistrés', s.dest); refresh(); updateDisk();
+  };
+  $('#btnBattery').onclick = () => api.open_battery_settings && api.open_battery_settings();
+  $('#btnCheckUpdate').onclick = async () => {
+    if (!api.check_update) return;
+    await api.check_update(); toast('Recherche de mises à jour…', 'Résultat dans quelques secondes');
+    setTimeout(async () => { await refresh(); const u = state.update || {};
+      if (u.error) toast('Vérification impossible', u.error, 'err');
+      else if (!u.available) toast('Vous avez la dernière version', 'Varika Download ' + (state.version || ''), 'ok'); }, 4000);
   };
   document.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModals);
   document.querySelectorAll('.modal').forEach(m => m.addEventListener('mousedown', e => { if (e.target === m) closeModals(); }));
@@ -905,7 +972,7 @@ class DemoApi {
       segments: it.status === 'completed' ? [] : it.segs.map(s => s.slice()), added:it.added, kind: it.kind, variant: it.variant};
   }
   async get_state(){ this.step(); const items = this.items.map(i => this.view(i));
-    return {items, totalSpeed: items.reduce((a, i) => a + (i.speed || 0), 0), settings:this.s, version:'1.3.0 (démo)',
+    return {items, totalSpeed: items.reduce((a, i) => a + (i.speed || 0), 0), settings:this.s, version:'1.4.0 (démo)', update:{available:false, status:'idle'},
       extension:{connected:true, lastSeen:Date.now()/1000 - 120, browser:'Chrome', server:true, port:47821, folder:'C:\\Users\\Vous\\AppData\\Roaming\\Varika Download\\extension'}}; }
   async add(url, n){ if (!/^https?:\/\//i.test(url)) return {ok:false, error:'Le lien doit commencer par http:// ou https://'};
     const f = decodeURIComponent(url.split('?')[0].split('/').pop() || 'telechargement');

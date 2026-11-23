@@ -1,4 +1,6 @@
+import com.varikaagency.download.core.DashTask;
 import com.varikaagency.download.core.FileTask;
+import com.varikaagency.download.core.Mp4;
 import com.varikaagency.download.core.HlsTask;
 import com.varikaagency.download.core.Json;
 import com.varikaagency.download.core.Manager;
@@ -48,10 +50,84 @@ public class CoreTest {
         return t;
     }
 
+    static java.io.BufferedReader IN = new java.io.BufferedReader(new java.io.InputStreamReader(System.in));
+
+    /** Demande au banc de test (Python) de couper ou rétablir le serveur, et attend sa réponse. */
+    static void ask(String what) throws Exception {
+        System.out.println("CTRL " + what);
+        System.out.flush();
+        String r = IN.readLine();
+        if (!"OK".equals(r)) throw new IllegalStateException("banc de test : " + r);
+    }
+
+    static void waitFor(java.util.concurrent.Callable<Boolean> c, int seconds, String what) throws Exception {
+        long end = System.currentTimeMillis() + seconds * 1000L;
+        while (System.currentTimeMillis() < end) {
+            if (c.call()) return;
+            Thread.sleep(100);
+        }
+        throw new IllegalStateException("délai dépassé : " + what);
+    }
+
     public static void main(String[] a) throws Exception {
         B = a[0];
         H = a[1];
         OUT = new File(a[2]);
+        final String G = a[3];               // serveur qui génère du contenu et que l'on peut « couper »
+        Task.netRetries = 1;
+        Manager.netCheckEveryMs = 500;
+
+        // 0. coupures d'Internet
+        final FileTask n = new FileTask("net", G + "/41943040.bin", new File(OUT, "reseau"), 4);
+        ask("slow");
+        n.start();
+        waitFor(() -> n.progress() > 0.3, 30, "30 %");
+        ask("down");
+        waitFor(() -> Task.WAITING.equals(n.status) && !n.isRunning(), 30, "attente réseau");
+        long kept = n.downloaded();
+        String why = n.error;
+        ask("up");
+        n.status = Task.QUEUED;
+        n.start();
+        n.await();
+        if (Task.COMPLETED.equals(n.status)) {
+            ok("coupure réseau", "attente (" + why + ") puis reprise depuis " + (kept * 100 / 41943040) + " %");
+            System.out.println("FILE reseau " + n.path.getPath());
+        } else fail("coupure réseau", n.status + " " + n.error);
+
+        File st0 = new File(OUT, "etat-reseau.json");
+        final Manager mg = new Manager(st0, new File(OUT, "reseau-auto"));
+        ask("slow");
+        final String nid = (String) mg.add(G + "/41943041.bin", 4, null, null, false, null, null).get("id");
+        waitFor(() -> mg.find(nid).progress() > 0.3, 30, "30 %");
+        ask("down");
+        waitFor(() -> Task.WAITING.equals(mg.find(nid).status), 30, "attente réseau");
+        Thread.sleep(1500);
+        boolean stillWaiting = Task.WAITING.equals(mg.find(nid).status);
+        ask("up");
+        waitFor(() -> Task.COMPLETED.equals(mg.find(nid).status), 60, "reprise automatique");
+        if (stillWaiting) {
+            ok("reprise automatique", "repart seul au retour du réseau");
+            System.out.println("FILE reseau-auto " + mg.find(nid).path.getPath());
+        } else fail("reprise automatique", "n'attendait pas le réseau");
+
+        // Wi-Fi uniquement : sur données mobiles, attend le Wi-Fi ; reprend dès qu'il revient
+        mg.saveSettings(Json.obj(Json.parse("{\"wifi_only\":true}")));
+        mg.setNetwork(true, false);
+        final String wid = (String) mg.add(G + "/1048576.bin", 4, null, null, false, null, null).get("id");
+        waitFor(() -> Task.WAITING.equals(mg.find(wid).status), 10, "attente Wi-Fi");
+        String wwhy = mg.find(wid).error;
+        mg.setNetwork(true, true);
+        waitFor(() -> Task.COMPLETED.equals(mg.find(wid).status), 30, "reprise en Wi-Fi");
+        // choix « télécharger quand même sur données mobiles » pour un fichier précis
+        mg.setNetwork(true, false);
+        final String fid = (String) mg.add(G + "/1048577.bin", 4, null, null, false, null, null).get("id");
+        mg.setWifiOnly(fid, false);
+        waitFor(() -> Task.COMPLETED.equals(mg.find(fid).status), 30, "données mobiles autorisées");
+        ok("Wi-Fi uniquement", "« " + wwhy + " » puis reprise en Wi-Fi ; exception par fichier respectée");
+        mg.setNetwork(true, true);
+        mg.saveSettings(Json.obj(Json.parse("{\"wifi_only\":false}")));
+        mg.shutdown();
         String expected = get(B + "/control?sha=1").trim();
 
         // 1. plusieurs connexions
@@ -105,7 +181,9 @@ public class CoreTest {
 
         // 6. connexion coupée sans reprise -> erreur
         t = file("/short", 2);
-        if (Task.ERROR.equals(t.status)) ok("connexion coupée", t.error); else fail("connexion coupée", t.status);
+        // 1.4 : une coupure n'est plus une erreur définitive : attente du réseau, puis reprise automatique
+        if ((Task.ERROR.equals(t.status) || Task.WAITING.equals(t.status)) && t.error != null) ok("connexion coupée", t.status + " : " + t.error);
+        else fail("connexion coupée", t.status);
 
         // 7. cookies jamais envoyés à un autre site
         get(B + "/control?reset_cookies=1");
@@ -141,6 +219,26 @@ public class CoreTest {
         l.start();
         l.await();
         if (Task.ERROR.equals(l.status) && l.error.contains("direct")) ok("hls direct refusé", l.error); else fail("hls direct", l.status + " " + l.error);
+
+        // 8b. vidéo « image + son » séparés (Facebook…) : analyse des pistes puis téléchargement
+        Mp4.Info vi = Mp4.sniff(H + "/dash/video.mp4", new LinkedHashMap<String, String>());
+        Mp4.Info ai = Mp4.sniff(H + "/dash/audio.mp4", new LinkedHashMap<String, String>());
+        String[] norm = Mp4.normalize("https://video.fbcdn.net/v/x.mp4?oh=SIG&bytestart=0&byteend=299999&oe=68");
+        if ("video".equals(vi.track) && vi.height == 480 && "audio".equals(ai.track)
+                && "https://video.fbcdn.net/v/x.mp4?oh=SIG&oe=68".equals(norm[0]) && "true".equals(norm[1])) {
+            ok("analyse des pistes", "image " + vi.height + "p, son ; adresse nettoyée");
+        } else fail("analyse des pistes", vi.track + " " + vi.height + " / " + ai.track + " / " + norm[0]);
+        DashTask ds = new DashTask("ds", H + "/dash/video.mp4", H + "/dash/audio.mp4", new File(OUT, "dash"), 4);
+        ds.forcedName = "Facebook.mp4";
+        ds.probe();
+        ds.start();
+        ds.await();
+        File son = new File(ds.path == null ? "" : ds.path.getPath().replaceAll("\\.mp4$", ".son.m4a"));
+        if (Task.COMPLETED.equals(ds.status) && son.isFile()) {
+            ok("image + son", ds.filename + " + " + son.getName() + " (sans MediaMuxer sur ordinateur)");
+            System.out.println("FILE dash-image " + ds.path.getPath());
+            System.out.println("FILE dash-son " + son.getPath());
+        } else fail("image + son", ds.status + " " + ds.error);
 
         // 9. Manager : file d'attente, état pour l'interface, sauvegarde et relecture
         File state = new File(OUT, "etat.json");

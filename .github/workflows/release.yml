@@ -1,0 +1,127 @@
+# Publication d'une nouvelle version :
+#   git tag v1.4.0 && git push origin v1.4.0
+# -> tests -> exe Windows + installateur, APK signé, extension .zip -> SHA256SUMS.txt -> Release GitHub.
+# Les logiciels déjà installés voient la mise à jour et la proposent (empreinte SHA-256 vérifiée).
+#
+# « Run workflow » à la main (sans tag) : compile tout et dépose les fichiers dans Artifacts, sans publier.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  windows:
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python scripts/set_version.py "${{ github.ref_name }}"
+      - name: Dépendances
+        run: python -m pip install -r requirements.txt
+      - name: VarikaDownload.exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name VarikaDownload --icon assets\varika-download.ico --add-data "ui;ui" --add-data "extension;extension" --version-file version_info.txt app.py
+      - name: Installateur
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/VarikaDownload.exe
+            dist/Setup-VarikaDownload-*.exe
+
+  android:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+      - name: Version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/set_version.py "${{ github.ref_name }}"
+      - name: Clé de production (facultative)
+        env:
+          KEYSTORE_B64: ${{ secrets.VARIKA_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/varika.jks"
+            echo "VARIKA_KEYSTORE=$RUNNER_TEMP/varika.jks" >> "$GITHUB_ENV"
+          fi
+      - name: APK
+        env:
+          VARIKA_KEYSTORE_PASSWORD: ${{ secrets.VARIKA_KEYSTORE_PASSWORD }}
+          VARIKA_KEY_ALIAS: ${{ secrets.VARIKA_KEY_ALIAS }}
+          VARIKA_KEY_PASSWORD: ${{ secrets.VARIKA_KEY_PASSWORD }}
+        run: |
+          gradle -p android assembleRelease
+          V=$(grep -oP "versionName '\K[^']+" android/app/build.gradle)
+          mkdir -p dist && cp android/app/build/outputs/apk/release/app-release.apk "dist/VarikaDownload-$V.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*.apk
+
+  extension:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version depuis le tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: python3 scripts/set_version.py "${{ github.ref_name }}"
+      - run: |
+          V=$(python3 -c "import json;print(json.load(open('extension/manifest.json'))['version'])")
+          mkdir -p dist && (cd extension && zip -qr "../dist/VarikaDownload-extension-$V.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: dist/*.zip
+
+  publier:
+    needs: [windows, android, extension]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Empreintes SHA-256
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Release dans ce dépôt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* --repo "${{ github.repository }}" \
+            --title "Varika Download ${{ github.ref_name }}" --generate-notes
+      - name: Copie dans le dépôt public des mises à jour (facultatif)
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          PUBLIC_REPO: ${{ vars.UPDATE_REPO || 'HAJA-M/varika-download-releases' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::Secret RELEASES_TOKEN absent : les logiciels installés lisent les mises à jour dans $PUBLIC_REPO, pensez à l'ajouter."
+            exit 0
+          fi
+          gh release create "${{ github.ref_name }}" dist/* --repo "$PUBLIC_REPO" \
+            --title "Varika Download ${{ github.ref_name }}" --notes "Mise à jour automatique de Varika Download ${{ github.ref_name }}."

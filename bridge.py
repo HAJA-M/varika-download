@@ -193,7 +193,7 @@ def parse_args(argv):
             p = urllib.parse.urlparse(a)
             q = urllib.parse.parse_qs(p.query)
             if p.netloc == "add" and q.get("url"):
-                out.append({k: (q.get(k) or [""])[0] for k in ("referrer", "filename", "kind", "title", "quality")}
+                out.append({k: (q.get(k) or [""])[0] for k in ("referrer", "filename", "kind", "title", "quality", "audio")}
                            | {"url": q["url"][0]})
     return out
 

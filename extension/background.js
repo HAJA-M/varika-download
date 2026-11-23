@@ -62,7 +62,7 @@ async function cookiesFor(url) {
   }
 }
 
-async function sendToApp({ url, filename, referrer, kind, title, quality }) {
+async function sendToApp({ url, filename, referrer, kind, title, quality, audio }) {
   return call('/add', {
     url,
     filename: filename || '',
@@ -70,6 +70,7 @@ async function sendToApp({ url, filename, referrer, kind, title, quality }) {
     kind: kind || '',
     title: title || '',
     quality: quality || '',
+    audio: audio || '',
     cookies: await cookiesFor(url),
     userAgent: navigator.userAgent,
   }, 45000);
@@ -233,6 +234,58 @@ const MIN_FILE = 300 * 1024;                              // ignore les petits e
 const media = new Map();                                  // tabId -> Map(url -> entrée)
 
 const hostOf = (u) => { try { return new URL(u).hostname; } catch { return ''; } };
+
+/*
+ * Lecteurs « adaptatifs » (Facebook, Instagram, beaucoup de sites) : ils demandent la vidéo par
+ * petits morceaux en ajoutant la plage voulue dans l'adresse (…&bytestart=0&byteend=399999), et
+ * chargent l'image et le son séparément. On retire ces paramètres pour obtenir le fichier entier.
+ */
+const FRAGMENT_PARAMS = ['bytestart', 'byteend'];
+const DASH_HOSTS = /(^|\.)(fbcdn\.net|cdninstagram\.com|fbsbx\.com)$/i;
+function normalizeMedia(url) {
+  try {
+    const u = new URL(url);
+    let fragment = false;
+    for (const p of FRAGMENT_PARAMS) if (u.searchParams.has(p)) { u.searchParams.delete(p); fragment = true; }
+    return { url: u.toString(), fragment };
+  } catch {
+    return { url, fragment: false };
+  }
+}
+
+/* Lit le début d'un MP4 : piste image ou son (« hdlr »), hauteur de l'image (« tkhd »), taille totale. */
+function findBox(bytes, name, from = 0) {
+  const c = [...name].map((x) => x.charCodeAt(0));
+  for (let i = from; i < bytes.length - 4; i++) {
+    if (bytes[i] === c[0] && bytes[i + 1] === c[1] && bytes[i + 2] === c[2] && bytes[i + 3] === c[3]) return i;
+  }
+  return -1;
+}
+async function inspectTrack(entry, tabId) {
+  try {
+    const r = await fetch(entry.url, { headers: { Range: 'bytes=0-262143' }, credentials: 'include', cache: 'no-store' });
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    const total = /\/(\d+)\s*$/.exec(r.headers.get('content-range') || '');
+    if (total) entry.size = +total[1];
+    else if (r.status === 200) entry.size = +(r.headers.get('content-length') || 0);
+    const h = findBox(bytes, 'hdlr');
+    if (h > 0 && h + 16 <= bytes.length) {
+      const type = String.fromCharCode(...bytes.slice(h + 12, h + 16));
+      entry.track = type === 'soun' ? 'audio' : type === 'vide' ? 'video' : null;
+    }
+    const t = findBox(bytes, 'tkhd');
+    if (entry.track === 'video' && t > 0) {
+      const off = t + (bytes[t + 4] === 1 ? 96 : 84);              // version 1 ou 0 de la boîte
+      if (off + 4 <= bytes.length) {
+        const height = ((bytes[off] << 8) | bytes[off + 1]);
+        if (height > 0 && height < 10000) entry.height = height;
+      }
+    }
+  } catch (e) {
+    log('inspection impossible', e.message || e);
+  }
+  await saveTab(tabId);
+}
 const header = (hs, name) => (hs || []).find((h) => h.name.toLowerCase() === name)?.value || '';
 
 function classify(url, mime) {
@@ -250,7 +303,7 @@ function classify(url, mime) {
 async function saveTab(tabId) {
   const list = [...(media.get(tabId) || new Map()).values()];
   await chrome.storage.session.set({ ['media:' + tabId]: list }).catch(() => {});
-  const shown = visibleMedia(list).length;
+  const shown = visibleMedia(list).length + dashCandidates(list).length;
   const { enabled } = await getSettings();               // E12 : « OFF » reste visible si la capture est coupée
   chrome.action.setBadgeText({ tabId, text: !enabled ? 'OFF' : shown ? String(shown) : '' }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ tabId, color: '#7ACC2E' }).catch(() => {});
@@ -267,7 +320,7 @@ async function tabMedia(tabId) {
 // Les playlists filles d'une playlist maître et les flux en direct ne sont pas proposés seuls.
 function visibleMedia(list) {
   const children = new Set(list.flatMap((m) => (m.variants || []).map((v) => v.url)));
-  return list.filter((m) => !children.has(m.url) && !m.live && !m.error)
+  return list.filter((m) => !children.has(m.url) && !m.live && !m.error && !m.dash)
     .sort((a, b) => (a.kind === 'hls' ? 0 : a.kind === 'video' ? 1 : 2) - (b.kind === 'hls' ? 0 : b.kind === 'video' ? 1 : 2)
       || (b.maxHeight || 0) - (a.maxHeight || 0) || (b.size || 0) - (a.size || 0));
 }
@@ -306,17 +359,21 @@ chrome.webRequest.onHeadersReceived.addListener((d) => {
   if (BLOCKED.test(hostOf(d.url)) || BLOCKED.test(hostOf(d.initiator || ''))) return;
   const kind = classify(d.url, header(d.responseHeaders, 'content-type'));
   if (!kind) return;
+  const { url, fragment } = normalizeMedia(d.url);
+  const dash = fragment || (kind !== 'hls' && DASH_HOSTS.test(hostOf(url)));
   const range = /\/(\d+)\s*$/.exec(header(d.responseHeaders, 'content-range'));
-  const size = range ? +range[1] : +header(d.responseHeaders, 'content-length') || 0;
-  if (kind !== 'hls' && size && size < MIN_FILE) return;
+  // un morceau (bytestart/byteend) ne dit rien de la taille réelle du fichier
+  const size = fragment ? 0 : range ? +range[1] : +header(d.responseHeaders, 'content-length') || 0;
+  if (kind !== 'hls' && !dash && size && size < MIN_FILE) return;
   (async () => {
     const map = await tabMedia(d.tabId);
-    if (map.has(d.url)) return;
-    const entry = { url: d.url, kind, size, mime: header(d.responseHeaders, 'content-type').split(';')[0], time: Date.now() };
-    map.set(d.url, entry);
+    if (map.has(url)) return;
+    const entry = { url, kind, size, dash, mime: header(d.responseHeaders, 'content-type').split(';')[0], time: Date.now() };
+    map.set(url, entry);
     if (map.size > 40) map.delete(map.keys().next().value);
-    log('média détecté', kind, d.url);
+    log('média détecté', kind, dash ? '(pistes séparées)' : '', url);
     if (kind === 'hls') await inspectPlaylist(entry, d.tabId);
+    else if (dash) await inspectTrack(entry, d.tabId);
     else await saveTab(d.tabId);
   })();
 }, { urls: ['<all_urls>'], types: ['media', 'xmlhttprequest', 'other', 'object', 'sub_frame'] }, ['responseHeaders']);
@@ -340,11 +397,40 @@ function label(m) {
   return `${m.kind === 'audio' ? 'Audio' : 'Vidéo'} ${ext.toUpperCase()}${size}`;
 }
 
+// Pistes séparées (Facebook…) : une entrée par qualité d'image, associée à la meilleure piste son.
+function dashCandidates(all) {
+  const tracks = all.filter((m) => m.dash && !m.error);
+  const videos = tracks.filter((m) => m.track === 'video' || (!m.track && m.kind === 'video'))
+    .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.size || 0) - (a.size || 0));
+  const audios = tracks.filter((m) => m.track === 'audio' || (!m.track && m.kind === 'audio'))
+    .sort((a, b) => (b.size || 0) - (a.size || 0));
+  const out = [], seen = new Set();
+  for (const v of videos) {
+    const key = v.height || v.url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const a = audios[0];
+    const size = (v.size || 0) + (a ? a.size || 0 : 0);
+    out.push({
+      url: v.url, audio: a ? a.url : '', kind: a ? 'dash' : 'video', qualities: [],
+      label: `Vidéo${v.height ? ' ' + v.height + 'p' : ''}${a ? ' + son' : ' (sans son)'}` +
+        (size ? ` · ${(size / 1048576).toFixed(size < 10485760 ? 1 : 0).replace('.', ',')} Mo` : ''),
+    });
+    if (out.length >= 4) break;
+  }
+  if (!videos.length && audios.length) {
+    out.push({ url: audios[0].url, kind: 'video', qualities: [], label: 'Audio seul' });
+  }
+  return out;
+}
+
 async function candidates(tabId, src) {
-  const list = visibleMedia([...(await tabMedia(tabId)).values()]).map((m) => ({
+  const all = [...(await tabMedia(tabId)).values()];
+  const list = dashCandidates(all).concat(visibleMedia(all).map((m) => ({
     url: m.url, kind: m.kind === 'hls' ? 'hls' : 'video', label: label(m),
     qualities: (m.variants || []).map((v) => v.height).filter((h, i, a) => h && a.indexOf(h) === i),
-  }));
+  })));
+  if (src) src = normalizeMedia(src).url;
   if (src && /^https?:/i.test(src) && !BLOCKED.test(hostOf(src)) && !list.some((c) => c.url === src)) {
     const kind = classify(src, '') === 'hls' ? 'hls' : 'video';
     list.unshift({ url: src, kind, label: kind === 'hls' ? 'Streaming HLS' : 'Vidéo de ce lecteur', qualities: [] });
@@ -354,9 +440,10 @@ async function candidates(tabId, src) {
 
 async function downloadMedia(item, tab, title) {
   const payload = { url: item.url, kind: item.kind, quality: item.quality || '', title: title || tab?.title || '',
-    referrer: tab?.url || '' };
+    referrer: tab?.url || '', audio: item.audio || '' };
   if (!(await isAppRunning())) {
-    const q = new URLSearchParams({ url: payload.url, referrer: payload.referrer, kind: payload.kind, title: payload.title, quality: payload.quality });
+    const q = new URLSearchParams({ url: payload.url, referrer: payload.referrer, kind: payload.kind, title: payload.title,
+      quality: payload.quality, audio: payload.audio });
     await launchApp('add?' + q.toString());
     return { ok: true, launched: true };
   }

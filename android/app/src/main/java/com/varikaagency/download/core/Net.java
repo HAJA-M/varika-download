@@ -181,6 +181,37 @@ public final class Net {
         }
     }
 
+    /** Erreur de réseau (coupure, délai, connexion refusée…) plutôt qu'une vraie erreur du lien. */
+    public static boolean isNetworkError(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.net.UnknownHostException || t instanceof java.net.SocketTimeoutException
+                    || t instanceof java.net.ConnectException || t instanceof java.net.NoRouteToHostException
+                    || t instanceof java.net.SocketException || t instanceof java.io.EOFException
+                    || t instanceof javax.net.ssl.SSLException) return true;
+            String m = String.valueOf(t.getMessage());
+            if (m.contains("connexion fermée trop tôt") || m.contains("unexpected end of stream")
+                    || m.contains("Connection reset") || m.contains("connexion interrompue")) return true;
+        }
+        return false;
+    }
+
+    /** Test rapide : le serveur répond-il ? */
+    public static boolean reachable(String url) {
+        try {
+            URL u = new URL(url);
+            int port = u.getPort() > 0 ? u.getPort() : ("https".equals(u.getProtocol()) ? 443 : 80);
+            java.net.Socket s = new java.net.Socket();
+            try {
+                s.connect(new java.net.InetSocketAddress(u.getHost(), port), 4000);
+                return true;
+            } finally {
+                s.close();
+            }
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     public static String message(Throwable e) {
         String m = e.getMessage();
         if (e instanceof java.net.UnknownHostException) return "pas de connexion Internet (" + m + ")";

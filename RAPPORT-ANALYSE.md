@@ -1,4 +1,4 @@
-# Varika Download 1.3.0 : rapport d'analyse et corrections
+# Varika Download 1.3.1 : rapport d'analyse et corrections
 
 ## Méthode
 1. Relecture complète du code : `engine.py`, `hls.py`, `app.py`, `bridge.py`, `cli.py`, l'extension et l'interface, soit environ 3 200 lignes.
@@ -56,3 +56,61 @@
 - La partie purement Android (écrans, service, MediaStore, conversion `.ts` vers `.mp4` avec MediaMuxer) **n'a pas pu être compilée ici** : le SDK Android n'est pas accessible depuis mon environnement. Elle est compilée par GitHub Actions. À tester sur un vrai téléphone avant de la distribuer.
 - YouTube et les contenus protégés par DRM ne sont volontairement pas pris en charge.
 - DASH (`.mpd`) et Firefox ne sont pas encore pris en charge.
+
+## Version 1.3.1 : vidéos Facebook illisibles (signalé après test réel)
+
+**Symptôme** : les vidéos téléchargées depuis Facebook pesaient 390 à 770 Ko et VLC restait sur 00:00.
+
+**Cause** : le lecteur de Facebook ne charge pas la vidéo d'un bloc. Il demande de petits morceaux en ajoutant la plage dans l'adresse (`…mp4?…&bytestart=0&byteend=399999`), et l'image et le son sont dans **deux fichiers séparés** (format DASH). L'extension enregistrait l'adresse telle quelle : on ne récupérait donc qu'un seul morceau, sans le son.
+
+**Corrections**
+- **Adresse complète** : l'extension retire `bytestart` et `byteend` pour obtenir le fichier entier.
+- **Pistes identifiées** : elle lit les 256 premiers Ko de chaque fichier pour savoir s'il contient l'image ou le son (boîte MP4 `hdlr`), ainsi que la hauteur de l'image (`tkhd`).
+- **Choix proposé** : « Vidéo 720p + son ».
+- **Fusion** : le logiciel télécharge les deux pistes, chacune en plusieurs connexions avec reprise, puis les réunit en un seul `.mp4` avec ffmpeg, sans réencodage (`dash.py`). Sans ffmpeg, l'image et le son sont enregistrés côte à côte, avec un message d'explication.
+- **Nom propre** : le nom du fichier ne contient plus le compteur de notifications : « (19) Facebook » devient « Facebook.mp4 ».
+- **Pages web refusées** : un lien vers une page web est refusé avec une explication, au lieu d'être enregistré comme un fichier « telechargement » de quelques Ko.
+- **Android** : même correction dans le navigateur vidéo (`DashTask`, `Mp4`). La fusion y passe par MediaMuxer.
+
+**Tests ajoutés**
+- `tests/test_dash.py` : une fausse page qui imite le lecteur de Facebook (morceaux dans l'adresse, image et son séparés, vidéo en `blob:`). On y vérifie une vidéo complète de 12 s avec image et son, ainsi que la reprise après redémarrage.
+- `W1` dans `test_bugs.py` : le refus des pages web.
+- Deux scénarios dans `test_android_core.py` : l'analyse des pistes et le téléchargement image + son.
+
+## Version 1.4.0 : intégration continue, mises à jour automatiques, mobile pour gros fichiers
+
+**Demande** : mises à jour automatiques du logiciel, et une application mobile pensée pour les fichiers de 5 Go ou plus, avec pause, reprise et reprise après une coupure d'Internet.
+
+**Problèmes constatés dans la 1.3.1**
+- Une coupure d'Internet de plus de quelques secondes faisait passer le téléchargement en « Erreur » : il fallait le relancer à la main.
+- Sur Android, une coupure pendant que l'écran était éteint, ou la fermeture de l'application par le système, laissait le téléchargement à l'arrêt.
+- L'état de reprise pouvait annoncer des octets pas encore réellement écrits sur le disque (coupure de courant), ce qui risquait un fichier corrompu.
+- Il n'y avait aucun moyen de savoir qu'une nouvelle version existait.
+
+**Corrections et ajouts**
+- Nouveau statut **« Attente réseau »** (Windows et Android) : une erreur réseau n'est plus une erreur. Le logiciel vérifie régulièrement si le serveur répond, puis reprend à l'octet près.
+- Le fichier est synchronisé sur le disque (`fsync` / `FileChannel.force`) **avant** chaque enregistrement de l'état, toutes les 3 s.
+- Android :
+  - écriture directe dans le dossier final ;
+  - surveillance du réseau (`ConnectivityManager`) ;
+  - option Wi-Fi uniquement, réglable fichier par fichier ;
+  - verrous processeur et Wi-Fi pendant les téléchargements ;
+  - reprise après fermeture par le système ;
+  - conseil « Batterie : sans restriction ».
+- Mises à jour : `updater.py` (Windows) et `Updater.java` (Android) lisent la dernière Release GitHub et vérifient le **SHA-256** avant toute installation.
+- CI : `ci.yml` (tests à chaque push) et `release.yml` (compilation et publication sur un tag `v*`), avec `scripts/set_version.py` pour un numéro unique partout.
+
+**Tests ajoutés**
+- `test_reseau.py` (5 Go par défaut) :
+  - coupure à 52 % puis reprise, SHA-256 identique ;
+  - reprise automatique au retour du réseau ;
+  - reprise après fermeture du logiciel.
+- `test_updater.py` :
+  - comparaison des versions ;
+  - téléchargement vérifié ;
+  - fichier modifié d'un octet refusé ;
+  - Release sans empreintes refusée.
+- `test_android_core.py` : mêmes scénarios réseau sur le moteur Java, plus Wi-Fi uniquement et le choix fichier par fichier.
+
+**Non vérifiable ici**
+Le code propre à Android (service, verrous, installeur de paquets) et le circuit réel de publication GitHub ne peuvent pas être exécutés dans l'environnement d'analyse. Ils sont compilés par le workflow Release et sont à valider sur un vrai téléphone et une vraie Release.

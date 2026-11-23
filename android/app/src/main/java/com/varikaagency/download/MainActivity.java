@@ -75,7 +75,21 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
+        // Android 10 : permission nécessaire pour écrire directement dans Téléchargements (gros fichiers sans copie)
+        if (Build.VERSION.SDK_INT == 29 && checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE}, 2);
+        }
         handleIntent(getIntent());
+        if (!Boolean.FALSE.equals(VarikaApp.manager().settings.get("auto_update"))) {
+            Updater.check();                    // une vérification discrète à chaque ouverture
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code == 2 && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+            VarikaApp.manager().settings.put("dest", VarikaApp.pickStorage(this).getPath());
+        }
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -122,6 +136,32 @@ public class MainActivity extends Activity {
         new Thread(() -> addSmart(url, title, null)).start();
     }
 
+    static final long LARGE_FILE = 1024L * 1024 * 1024;      // au-delà de 1 Go sur données mobiles : on demande
+
+    /**
+     * Gros fichier et téléphone sur données mobiles : par prudence le téléchargement attend le Wi-Fi,
+     * et on demande à l'utilisateur s'il préfère quand même utiliser ses données.
+     */
+    static void askIfMetered(final Activity a, Map<String, Object> res) {
+        if (!Boolean.TRUE.equals(res.get("ok"))) return;
+        final Manager m = VarikaApp.manager();
+        final Task t = m.find(String.valueOf(res.get("id")));
+        boolean metered = !Boolean.TRUE.equals(m.network().get("unmetered"));
+        if (t == null || !metered || t.total < LARGE_FILE || t.wifiOnly != null || m.needsWifi(t)) return;
+        m.setWifiOnly(t.id, true);                               // en attendant la réponse : on ne consomme rien
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (a.isFinishing()) return;
+            new android.app.AlertDialog.Builder(a, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle(R.string.metered_title)
+                    .setMessage("« " + t.filename + " » fait " + Net.humanSize(t.total) + ". Vous êtes sur données mobiles : "
+                            + "le télécharger maintenant peut consommer une grande partie de votre forfait.")
+                    .setPositiveButton("Attendre le Wi-Fi", (d, w) -> m.setWifiOnly(t.id, true))
+                    .setNegativeButton("Télécharger maintenant", (d, w) -> m.setWifiOnly(t.id, false))
+                    .setCancelable(false)
+                    .show();
+        });
+    }
+
     /**
      * Ajoute un lien. Si c'est une page web (et pas un fichier), on l'ouvre dans le navigateur
      * vidéo pour y trouver la vidéo, au lieu de télécharger la page HTML.
@@ -147,10 +187,28 @@ public class MainActivity extends Activity {
         } catch (NumberFormatException ignored) {
             // valeur par défaut
         }
-        res = VarikaApp.manager().add(url, n, null, null, false, null, null);
-        if (Boolean.TRUE.equals(res.get("ok"))) notifyUi("Ajouté à la liste", Net.host(url), "info");
-        else notifyUi("Lien refusé", String.valueOf(res.get("error")), "err");
+        // On vérifie le lien tout de suite (taille, nom) ; hors connexion, il est mis en file et attendra le réseau
+        res = VarikaApp.manager().add(url, n, null, null, true, null, null);
+        if (!Boolean.TRUE.equals(res.get("ok")) && res.get("error") != null && isOfflineError(String.valueOf(res.get("error")))) {
+            res = VarikaApp.manager().add(url, n, null, null, false, null, null);
+            if (Boolean.TRUE.equals(res.get("ok"))) {
+                notifyUi("Ajouté, en attente du réseau", "Le téléchargement démarrera dès le retour d'Internet", "info");
+                return res;
+            }
+        }
+        if (Boolean.TRUE.equals(res.get("ok"))) {
+            Object size = res.get("size");
+            notifyUi("Ajouté à la liste", res.get("filename") + (size instanceof Number ? " · " + Net.humanSize(((Number) size).doubleValue()) : ""), "info");
+            askIfMetered(this, res);
+        } else {
+            notifyUi("Lien refusé", String.valueOf(res.get("error")), "err");
+        }
         return res;
+    }
+
+    private static boolean isOfflineError(String msg) {
+        return msg.contains("pas de connexion") || msg.contains("ne répond pas") || msg.contains("Unable to resolve")
+                || msg.contains("connect") || msg.contains("Network is unreachable");
     }
 
     static boolean isWebPage(String url) {
@@ -191,11 +249,39 @@ public class MainActivity extends Activity {
         @JavascriptInterface public String get_state() {
             Map<String, Object> extra = new LinkedHashMap<String, Object>();
             extra.put("platform", "android");
+            android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+            extra.put("batteryRestricted", !pm.isIgnoringBatteryOptimizations(getPackageName()));
+            extra.put("directStorage", VarikaApp.directStorage);
+            extra.put("update", Updater.state());
             return ok(m().state(extra));
         }
 
         @JavascriptInterface public String add(String url, String connections) {
-            return ok(addSmart(url, null, connections));
+            // la vérification du lien peut prendre quelques secondes : elle ne doit pas bloquer l'interface
+            new Thread(() -> addSmart(url, null, connections)).start();
+            Map<String, Object> r = new LinkedHashMap<String, Object>();
+            r.put("ok", true);
+            r.put("pending", true);
+            return ok(r);
+        }
+
+        @JavascriptInterface public String check_update() {
+            Updater.check();
+            return ok(Updater.state());
+        }
+
+        @JavascriptInterface public String install_update() {
+            Updater.install(MainActivity.this);
+            return ok(Updater.state());
+        }
+
+        @JavascriptInterface public String open_battery_settings() {
+            try {
+                startActivity(new Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (ActivityNotFoundException e) {
+                startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));
+            }
+            return "null";
         }
 
         @JavascriptInterface public String pause(String id) { m().pause(id); return "null"; }

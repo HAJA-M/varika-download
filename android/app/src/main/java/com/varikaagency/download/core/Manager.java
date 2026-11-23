@@ -22,7 +22,7 @@ public class Manager {
         void onActivityChanged(boolean busy);
     }
 
-    public static final String VERSION = "1.3.0";
+    public static final String VERSION = "1.4.0";
 
     private final File stateFile;
     private final List<Task> order = new ArrayList<Task>();
@@ -31,13 +31,27 @@ public class Manager {
     private volatile Listener listener;
     private final Object saveLock = new Object();
     private boolean wasBusy;
+    /** État du réseau, fourni par Android (NetworkMonitor). Sur ordinateur : toujours disponible. */
+    private volatile boolean netAvailable = true, netUnmetered = true;
+    private final Object netSignal = new Object();
+    static final String WAIT_WIFI = "en attente du Wi-Fi (réglage « Wi-Fi uniquement »)";
+    static final String WAIT_NET = "en attente du réseau";
+    public static long netCheckEveryMs = 8000;
 
     public Manager(File stateFile, File defaultDest) {
         this.stateFile = stateFile;
         settings.put("dest", defaultDest.getPath());
         settings.put("connections", 8L);
         settings.put("max_parallel", 3L);
+        settings.put("wifi_only", false);       // gros fichiers : ne pas consommer les données mobiles
+        settings.put("auto_resume", true);      // reprendre seul après une coupure ou un redémarrage
+        settings.put("auto_update", true);      // vérifier les nouvelles versions à l'ouverture
         load();
+        Thread watch = new Thread(new Runnable() {
+            @Override public void run() { netWatch(); }
+        }, "varika-reseau");
+        watch.setDaemon(true);
+        watch.start();
         Thread loop = new Thread(new Runnable() {
             @Override public void run() { loop(); }
         }, "varika-file-attente");
@@ -54,11 +68,13 @@ public class Manager {
             Map<String, Object> data = Json.obj(Json.parse(FileTask.readText(stateFile)));
             Map<String, Object> s = Json.obj(data.get("settings"));
             for (String k : new String[]{"connections", "max_parallel"}) if (s.get(k) instanceof Number) settings.put(k, s.get(k));
+            for (String k : new String[]{"wifi_only", "auto_resume", "auto_update"}) if (s.get(k) instanceof Boolean) settings.put(k, s.get(k));
             for (Object o : Json.arr(data.get("items"))) {
                 try {                                   // une entrée abîmée est ignorée, pas fatale
                     Map<String, Object> r = Json.obj(o);
                     if (Json.str(r, "id") == null || Json.str(r, "url") == null) continue;
                     Task t = Task.fromRecord(r);
+                    if (Task.QUEUED.equals(t.status) && !Boolean.TRUE.equals(settings.get("auto_resume"))) t.status = Task.PAUSED;
                     if (find(t.id) == null) order.add(t);
                 } catch (RuntimeException ignored) {
                     // suivant
@@ -104,6 +120,12 @@ public class Manager {
                     for (Task t : order) {
                         if (closing || running >= max) break;
                         if (Task.QUEUED.equals(t.status) && !t.isRunning()) {
+                            if (!netAvailable) continue;                       // attend le réseau
+                            if (needsWifi(t) && !netUnmetered) {               // gros fichier : attend le Wi-Fi
+                                t.status = Task.WAITING;
+                                t.error = WAIT_WIFI;
+                                continue;
+                            }
                             try {
                                 t.start();
                                 running++;
@@ -154,6 +176,76 @@ public class Manager {
 
     private final java.util.Set<String> published = new java.util.HashSet<String>();
 
+    public boolean needsWifi(Task t) {
+        return t.wifiOnly != null ? t.wifiOnly : Boolean.TRUE.equals(settings.get("wifi_only"));
+    }
+
+    /**
+     * Appelé par Android quand le réseau change. Si on passe sur données mobiles, les téléchargements
+     * « Wi-Fi uniquement » s'arrêtent proprement (ils reprendront au retour du Wi-Fi).
+     */
+    public void setNetwork(boolean available, boolean unmetered) {
+        netAvailable = available;
+        netUnmetered = unmetered;
+        if (available && !unmetered) {
+            for (Task t : snapshot()) if (t.isRunning() && needsWifi(t)) t.suspend(WAIT_WIFI);
+        }
+        synchronized (netSignal) { netSignal.notifyAll(); }
+        dirty = true;
+    }
+
+    public Map<String, Object> network() {
+        Map<String, Object> n = new LinkedHashMap<String, Object>();
+        n.put("available", netAvailable);
+        n.put("unmetered", netUnmetered);
+        return n;
+    }
+
+    /** Téléchargements en attente : relancés dès que le réseau (ou le Wi-Fi) revient et que le serveur répond. */
+    private void netWatch() {
+        Map<String, long[]> progress = new java.util.HashMap<String, long[]>();     // id -> {octets, essais sans progrès}
+        while (!closing) {
+            synchronized (netSignal) {
+                try {
+                    netSignal.wait(netCheckEveryMs);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+            if (!netAvailable) continue;
+            for (Task t : snapshot()) {
+                if (!Task.WAITING.equals(t.status) || t.isRunning()) continue;
+                if (needsWifi(t) && !netUnmetered) {
+                    t.error = WAIT_WIFI;
+                    continue;
+                }
+                if (!Net.reachable(t.sourceUrl != null ? t.sourceUrl : t.url)) continue;
+                long got = t.downloaded();
+                long[] p = progress.containsKey(t.id) ? progress.get(t.id) : new long[]{-1, 0};
+                p[1] = got > p[0] ? 0 : p[1] + 1;
+                p[0] = got;
+                progress.put(t.id, p);
+                if (p[1] >= 8) {                     // le serveur répond mais coupe à chaque essai
+                    t.status = Task.ERROR;
+                    t.error = "le serveur interrompt la connexion à chaque essai : réessayez plus tard";
+                    continue;
+                }
+                t.status = Task.QUEUED;
+                dirty = true;
+            }
+        }
+    }
+
+    /** Choix de l'utilisateur pour un téléchargement précis (alerte « gros fichier sur données mobiles »). */
+    public void setWifiOnly(String id, Boolean wifiOnly) {
+        Task t = find(id);
+        if (t == null) return;
+        t.wifiOnly = wifiOnly;
+        if (Task.WAITING.equals(t.status) && Boolean.FALSE.equals(wifiOnly)) t.status = Task.QUEUED;
+        if (t.isRunning() && Boolean.TRUE.equals(wifiOnly) && !netUnmetered) t.suspend(WAIT_WIFI);
+        dirty = true;
+    }
+
     public void shutdown() {
         closing = true;
         List<Task> running = new ArrayList<Task>();
@@ -175,7 +267,10 @@ public class Manager {
 
     public boolean busy() {
         synchronized (order) {
-            for (Task t : order) if (t.isRunning() || Task.QUEUED.equals(t.status)) return true;
+            // « en attente du réseau » compte aussi : le service reste là pour reprendre dès son retour
+            for (Task t : order) {
+                if (t.isRunning() || Task.QUEUED.equals(t.status) || Task.WAITING.equals(t.status)) return true;
+            }
         }
         return false;
     }
@@ -192,6 +287,12 @@ public class Manager {
     /** Ajoute un téléchargement. {@code probe} : vérifie le lien tout de suite (liens venant d'un navigateur). */
     public Map<String, Object> add(String url, Integer connections, String filename, Map<String, String> headers,
                                    boolean probe, String kind, Integer quality) {
+        return add(url, connections, filename, headers, probe, kind, quality, null);
+    }
+
+    /** {@code audioUrl} : piste son séparée (vidéos « image + son », kind = "dash"). */
+    public Map<String, Object> add(String url, Integer connections, String filename, Map<String, String> headers,
+                                   boolean probe, String kind, Integer quality, String audioUrl) {
         Map<String, Object> res = new LinkedHashMap<String, Object>();
         url = url == null ? "" : url.trim();
         if (!url.toLowerCase(java.util.Locale.ROOT).startsWith("http://") && !url.toLowerCase(java.util.Locale.ROOT).startsWith("https://")) {
@@ -202,7 +303,8 @@ public class Manager {
         int n = connections != null && connections > 0 ? connections : ((Number) settings.get("connections")).intValue();
         String id = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
         File dest = new File(settings.get("dest").toString());
-        Task t = "hls".equals(kind) || isHls(url) ? new HlsTask(id, url, dest, n, quality) : new FileTask(id, url, dest, n);
+        Task t = "dash".equals(kind) && audioUrl != null ? new DashTask(id, url, audioUrl, dest, n)
+                : "hls".equals(kind) || isHls(url) ? new HlsTask(id, url, dest, n, quality) : new FileTask(id, url, dest, n);
         t.forcedName = filename;
         if (headers != null) for (Map.Entry<String, String> e : headers.entrySet()) {
             if (e.getValue() != null && !e.getValue().isEmpty() && e.getValue().indexOf('\n') < 0 && e.getValue().indexOf('\r') < 0) {
@@ -212,6 +314,7 @@ public class Manager {
         if (probe) {
             try {
                 if (t instanceof HlsTask) ((HlsTask) t).probe();
+                else if (t instanceof DashTask) ((DashTask) t).probe();
                 else ((FileTask) t).probe();
             } catch (Exception e) {
                 res.put("ok", false);
@@ -226,6 +329,7 @@ public class Manager {
         res.put("ok", true);
         res.put("id", id);
         res.put("filename", t.filename);
+        res.put("size", t.total > 0 ? t.total : null);
         return res;
     }
 
@@ -233,13 +337,14 @@ public class Manager {
         Task t = find(id);
         if (t == null) return;
         if (t.isRunning()) t.pause();
-        else if (Task.QUEUED.equals(t.status)) t.status = Task.PAUSED;
+        else if (Task.QUEUED.equals(t.status) || Task.WAITING.equals(t.status)) t.status = Task.PAUSED;
         dirty = true;
     }
 
     public void resume(String id) {
         Task t = find(id);
-        if (t != null && !t.isRunning() && (Task.PAUSED.equals(t.status) || Task.ERROR.equals(t.status))) {
+        if (t != null && !t.isRunning() && (Task.PAUSED.equals(t.status) || Task.ERROR.equals(t.status)
+                || Task.WAITING.equals(t.status))) {
             t.status = Task.QUEUED;
             dirty = true;
         }
@@ -297,6 +402,10 @@ public class Manager {
         if (s.get("connections") instanceof Number) {
             settings.put("connections", (long) Math.max(1, Math.min(32, ((Number) s.get("connections")).intValue())));
         }
+        for (String k : new String[]{"wifi_only", "auto_resume", "auto_update"}) if (s.get(k) instanceof Boolean) settings.put(k, s.get(k));
+        if (Boolean.FALSE.equals(settings.get("wifi_only")) || netUnmetered) {
+            synchronized (netSignal) { netSignal.notifyAll(); }
+        }
         if (s.get("max_parallel") instanceof Number) {
             settings.put("max_parallel", (long) Math.max(1, Math.min(10, ((Number) s.get("max_parallel")).intValue())));
         }
@@ -316,6 +425,7 @@ public class Manager {
         st.put("totalSpeed", totalSpeed);
         st.put("settings", settings);
         st.put("version", VERSION);
+        st.put("network", network());
         if (extra != null) st.putAll(extra);
         return st;
     }

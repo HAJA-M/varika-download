@@ -53,6 +53,7 @@ public class HlsTask extends Task {
     private final Map<String, Long> done = new ConcurrentHashMap<String, Long>();
     private final Map<String, byte[]> keys = new HashMap<String, byte[]>();
     private volatile long bytes;
+    private volatile String waitingWhy;
 
     public HlsTask(String id, String url, File destDir, int connections, Integer quality) {
         super(id, url, destDir, connections);
@@ -267,16 +268,18 @@ public class HlsTask extends Task {
                 probe();
             }
             if (path == null) {
-                if (!destDir.isDirectory() && !destDir.mkdirs()) throw new IOException("dossier inaccessible : " + destDir);
+                if (!destDir.mkdirs() && !destDir.isDirectory()) throw new IOException("dossier inaccessible : " + destDir);
                 path = Net.claim(new File(destDir, filename), this);
                 filename = path.getName();
             }
-            if (!parts().isDirectory() && !parts().mkdirs()) throw new IOException("dossier temporaire impossible");
+            if (!parts().mkdirs() && !parts().isDirectory()) throw new IOException("dossier temporaire impossible");
             scanDone();
             if (total > 0 && !done.isEmpty()) Net.checkFreeSpace(destDir, (total - bytes) * 2);
             status = DOWNLOADING;
+            waitingWhy = null;
             runWorkers();
             if (fatal != null) throw new IOException(fatal);
+            if (waitingWhy != null) throw new java.net.SocketException(waitingWhy);
             if (done.size() == count()) {
                 assemble();
                 status = COMPLETED;
@@ -284,8 +287,7 @@ public class HlsTask extends Task {
                 status = PAUSED;
             }
         } catch (Exception e) {
-            error = Net.message(e);
-            status = ERROR;
+            failed(e);                       // coupure réseau -> « en attente », reprise automatique
         } finally {
             speed = 0;
             active = 0;
@@ -416,9 +418,10 @@ public class HlsTask extends Task {
                 }
                 if (s.keyUri != null) data = decrypt(data, s);
                 File tmp = new File(segFile(track, i).getPath() + ".tmp");
-                OutputStream o = new FileOutputStream(tmp);
+                FileOutputStream o = new FileOutputStream(tmp);
                 try {
                     o.write(data);
+                    o.getFD().sync();                  // un segment « fini » doit vraiment être écrit
                 } finally {
                     o.close();
                 }
@@ -430,6 +433,11 @@ public class HlsTask extends Task {
             } catch (Exception e) {
                 if (String.valueOf(e.getMessage()).contains("DRM")) {
                     fatal = e.getMessage();
+                    stop = true;
+                    return;
+                }
+                if (Net.isNetworkError(e) && retries + 1 > netRetries) {
+                    waitingWhy = Net.message(e);       // coupure durable : on attendra le réseau
                     stop = true;
                     return;
                 }

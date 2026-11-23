@@ -1,6 +1,6 @@
 ; Installateur Windows (Inno Setup 6) : compile dist\VarikaDownload.exe en Setup-VarikaDownload-1.0.0.exe
 #define AppName "Varika Download"
-#define AppVersion "1.3.0"
+#define AppVersion "1.4.0"
 
 [Setup]
 AppId={{DB0A047E-9259-456D-9217-0483B23BCCB1}
@@ -18,6 +18,8 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
+CloseApplications=yes
+RestartApplications=no
 
 [Languages]
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
@@ -35,6 +37,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\VarikaDownload.exe"; Tasks: d
 
 [Run]
 Filename: "{app}\VarikaDownload.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Mise à jour automatique (installation silencieuse) : on relance le logiciel à la fin
+Filename: "{app}\VarikaDownload.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [Registry]
 ; Protocole varika:// (enregistré par le logiciel au lancement) : supprimé à la désinstallation

@@ -22,18 +22,50 @@ public class DownloadService extends Service {
     static final int ID = 1;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private int idleTicks;
+    private android.os.PowerManager.WakeLock wake;
+    private android.net.wifi.WifiManager.WifiLock wifi;
+
+    /**
+     * Pendant un téléchargement, écran éteint : on garde le processeur et le Wi-Fi éveillés.
+     * Sans ça, Android met le Wi-Fi en veille et un fichier de 5 Go n'avance plus.
+     * Les verrous sont rendus dès qu'il n'y a plus de transfert (attente du réseau comprise).
+     */
+    @SuppressWarnings("deprecation")
+    private void holdLocks(boolean transferring) {
+        if (transferring) {
+            if (wake == null) {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                wake = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "varika:telechargement");
+                wake.setReferenceCounted(false);
+            }
+            if (!wake.isHeld()) wake.acquire(60 * 60 * 1000L);        // renouvelé tant que ça télécharge
+            if (wifi == null) {
+                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+                wifi = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "varika:wifi");
+                wifi.setReferenceCounted(false);
+            }
+            if (!wifi.isHeld()) wifi.acquire();
+        } else {
+            if (wake != null && wake.isHeld()) wake.release();
+            if (wifi != null && wifi.isHeld()) wifi.release();
+        }
+    }
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             Manager m = VarikaApp.manager();
             if (m == null || !m.busy()) {
                 if (++idleTicks >= 3) {             // rien depuis 3 s : on s'arrête
+                    holdLocks(false);
                     stopForegroundCompat();
                     stopSelf();
                     return;
                 }
             } else {
                 idleTicks = 0;
+                boolean transferring = false;
+                for (Task t : m.snapshot()) transferring |= t.isRunning();
+                holdLocks(transferring);
                 Notifications.manager(DownloadService.this).notify(ID, build(m));
             }
             handler.postDelayed(this, 1000);
@@ -53,11 +85,12 @@ public class DownloadService extends Service {
     }
 
     private Notification build(Manager m) {
-        int active = 0;
+        int active = 0, waiting = 0;
         long done = 0, total = 0;
         double speed = 0;
         if (m != null) {
             for (Task t : m.snapshot()) {
+                if (Task.WAITING.equals(t.status)) waiting++;
                 if (!t.isRunning()) continue;
                 active++;
                 speed += t.speed;
@@ -69,8 +102,10 @@ public class DownloadService extends Service {
         }
         Notification.Builder b = Notifications.builder(this, VarikaApp.CH_PROGRESS)
                 .setSmallIcon(R.drawable.ic_stat_download)
-                .setContentTitle(active <= 1 ? getString(R.string.notif_one) : getString(R.string.notif_many, active))
-                .setContentText(Net.humanSize(speed) + "/s" + (total > 0 ? " · " + Net.humanSize(done) + " / " + Net.humanSize(total) : ""))
+                .setContentTitle(active == 0 && waiting > 0 ? getString(R.string.notif_waiting)
+                        : active <= 1 ? getString(R.string.notif_one) : getString(R.string.notif_many, active))
+                .setContentText(active == 0 && waiting > 0 ? getString(R.string.notif_waiting_text, waiting)
+                        : Net.humanSize(speed) + "/s" + (total > 0 ? " · " + Net.humanSize(done) + " / " + Net.humanSize(total) : ""))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
@@ -89,7 +124,20 @@ public class DownloadService extends Service {
         else stopForeground(true);
     }
 
+    /**
+     * Android 15 limite la durée d'un service de transfert. Quand la limite arrive, on met les
+     * téléchargements en attente proprement (tout est sauvegardé) : ils reprendront à la
+     * prochaine ouverture de l'application.
+     */
+    @Override public void onTimeout(int startId, int fgsType) {
+        Manager m = VarikaApp.manager();
+        if (m != null) for (Task t : m.snapshot()) if (t.isRunning()) t.suspend(getString(R.string.limit_reached));
+        holdLocks(false);
+        stopSelf();
+    }
+
     @Override public void onDestroy() {
+        holdLocks(false);
         handler.removeCallbacks(tick);
         super.onDestroy();
     }

@@ -24,6 +24,8 @@ Le principe d'un gestionnaire comme IDM tient en 4 idées :
 """
 
 import errno
+import http.client
+import socket
 import json
 import os
 import re
@@ -118,6 +120,36 @@ DOWNLOADING = "téléchargement"
 PAUSED = "en pause"
 COMPLETED = "terminé"
 ERROR = "erreur"
+WAITING = "attente réseau"     # coupure d'Internet : reprise automatique dès que le réseau revient
+
+NET_RETRIES = 4                # essais rapides avant de passer en « attente réseau »
+_NET_ERRNOS = {errno.ENETUNREACH, errno.ENETDOWN, errno.EHOSTUNREACH, errno.ECONNRESET, errno.ECONNREFUSED,
+               errno.ECONNABORTED, errno.ETIMEDOUT, errno.EPIPE}
+
+
+class NetworkDown(Exception):
+    """Le réseau (ou le serveur) ne répond plus : on attendra qu'il revienne."""
+
+
+def is_network_error(e):
+    """Coupure réseau (à réessayer plus tard) plutôt qu'une vraie erreur du lien."""
+    if isinstance(e, urllib.error.HTTPError):
+        return False
+    if isinstance(e, (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError,
+                      http.client.HTTPException, NetworkDown)):
+        return True
+    return isinstance(e, OSError) and e.errno in _NET_ERRNOS
+
+
+def host_reachable(url, timeout=4):
+    """Test rapide : peut-on ouvrir une connexion vers le serveur ?"""
+    try:
+        p = urllib.parse.urlparse(url)
+        port = p.port or (443 if p.scheme == "https" else 80)
+        with socket.create_connection((p.hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 # ----------------------------------------------------------------- utilitaires
@@ -228,6 +260,9 @@ class Download:
         self.etag = None           # empreinte du fichier sur le serveur (ETag / Last-Modified)
         self.note = None
         self._not_ranged = 0
+        self._waiting = False
+        self._waiting_why = None
+        self._user_paused = False
 
         self.filename = None
         self.path = None           # chemin final
@@ -265,7 +300,7 @@ class Download:
         if r.get("status") == COMPLETED and d.path and os.path.exists(d.path):
             d.status = COMPLETED
             return d
-        d.status = ERROR if r.get("status") == ERROR else PAUSED
+        d.status = ERROR if r.get("status") == ERROR else WAITING if r.get("status") == WAITING else PAUSED
         if d.path and d.resumable and d._try_load_state(d.path):
             return d                          # reprise possible là où on s'était arrêté
         d.path, d.total, d.resumable, d.segments = None, None, False, []   # on recommencera
@@ -293,11 +328,16 @@ class Download:
         self._stop.clear()
         self._fatal = None
         self.error = None
+        self._user_paused = False
         self._runner = threading.Thread(target=self._run, daemon=True)
         self._runner.start()
 
     def pause(self):
+        self._user_paused = True
         self._stop.set()
+
+    def _stop_by_user(self):
+        return self._user_paused
 
     def wait(self):
         if self._runner:
@@ -353,11 +393,14 @@ class Download:
                 self.status = PROBING
                 self._refresh()                 # B5 / B12 : lien expiré ou fichier modifié
             self.status = DOWNLOADING
+            self._waiting = False
             if self.resumable:
                 self._run_segmented()
                 complete = all(s.done for s in self.segments)
             else:
                 complete = self._run_single()
+            if self._waiting:
+                raise NetworkDown(self._waiting_why or "connexion perdue")
             if complete:
                 self._finish()
             else:
@@ -365,8 +408,14 @@ class Download:
                 self.status = PAUSED
                 self._probed = False            # à la reprise, on revérifie le lien
         except Exception as e:  # noqa: BLE001 — on affiche l'erreur à l'utilisateur
-            self.error = str(e)
-            self.status = ERROR
+            if is_network_error(e) and not self._stop_by_user():
+                # Coupure : on garde tout ce qui est reçu et on attend le retour du réseau
+                self.error = f"en attente du réseau ({e})"
+                self.status = WAITING
+                self._probed = False
+            else:
+                self.error = str(e)
+                self.status = ERROR
             try:
                 self._save_state()
             except Exception:
@@ -374,7 +423,7 @@ class Download:
         finally:
             self.speed = 0.0
             self.active = 0
-            if self.status in (PAUSED, ERROR):
+            if self.status in (PAUSED, ERROR, WAITING):
                 release_path(self.path)       # le .part sur le disque suffit à protéger le nom
 
     # 1) Sonder le serveur
@@ -441,6 +490,12 @@ class Download:
                 cl = h.get("Content-Length")
                 self.total = int(cl) if cl and cl.isdigit() else None
             name = self.forced_name or _filename_from_headers(h, final_url)
+            # Une page web n'est pas un fichier : on refuse plutôt que d'enregistrer du HTML
+            ctype = (h.get("Content-Type") or "").lower()
+            attachment = "attachment" in (h.get("Content-Disposition") or "").lower()
+            if ctype.startswith("text/html") and not attachment and not self.forced_name:
+                raise ValueError("ce lien mène à une page web, pas à un fichier. Ouvrez la page dans le "
+                                 "navigateur : le bouton « Télécharger cette vidéo » de l'extension trouvera le fichier")
         self.url = final_url
         self.filename = _safe_name(name)
         self._probed = True
@@ -494,6 +549,13 @@ class Download:
         with self._lock:
             data = {"url": self.url, "total": self.total,
                     "segments": [s.to_dict() for s in self.segments]}
+        # Les octets doivent être réellement sur le disque AVANT d'enregistrer qu'ils sont reçus :
+        # sinon une coupure de courant laisserait des trous dans un fichier « terminé ».
+        try:
+            with open(self.part, "rb+") as f:
+                os.fsync(f.fileno())
+        except OSError:
+            pass
         tmp = self.state_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
@@ -513,7 +575,7 @@ class Download:
             inst = (b - last_b) / max(1e-6, now - last_t)
             self.speed = inst if self.speed == 0 else 0.7 * self.speed + 0.3 * inst
             last_t, last_b = now, b
-            if now - last_save > 2:
+            if now - last_save > 3:
                 self._save_state()
                 last_save = now
         for w in workers:
@@ -607,9 +669,13 @@ class Download:
                     self._stop.set()
                     return
                 retries = self._backoff(retries, f"HTTP {e.code}")
-            except (OSError, ConnectionError, RuntimeError) as e:
+            except (OSError, ConnectionError, RuntimeError, http.client.HTTPException) as e:
                 if getattr(e, "errno", None) == errno.ENOSPC:
                     self._fatal = "disque plein : libérez de l'espace puis reprenez le téléchargement"
+                    self._stop.set()
+                    return
+                if is_network_error(e) and retries + 1 > NET_RETRIES:
+                    self._waiting, self._waiting_why = True, str(e)   # coupure durable : attente du réseau
                     self._stop.set()
                     return
                 retries = self._backoff(retries, str(e))

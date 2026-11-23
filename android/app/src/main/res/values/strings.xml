@@ -7,6 +7,11 @@
     <string name="notif_one">Téléchargement en cours</string>
     <string name="notif_many">%1$d téléchargements en cours</string>
     <string name="notif_done">Téléchargement terminé</string>
+    <string name="notif_waiting">En attente du réseau</string>
+    <string name="notif_waiting_text">%1$d téléchargement(s) reprendront dès le retour d\'Internet</string>
+    <string name="limit_reached">en pause : durée maximale atteinte, ouvrez l\'application pour reprendre</string>
+    <string name="metered_title">Gros fichier sur données mobiles</string>
+    <string name="update_ready">Mise à jour prête</string>
     <string name="pause_all">Tout suspendre</string>
     <string name="close">Fermer</string>
     <string name="browser_hint">Adresse ou recherche</string>

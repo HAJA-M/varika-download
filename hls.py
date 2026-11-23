@@ -26,8 +26,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from engine import (COMPLETED, DOWNLOADING, ERROR, MAX_RETRIES, PAUSED, PROBING,
-                    QUEUED, UA, _safe_name, check_free_space, claim_path, http_open, release_path)
+from engine import (COMPLETED, DOWNLOADING, ERROR, MAX_RETRIES, NET_RETRIES, PAUSED, PROBING,
+                    QUEUED, UA, WAITING, NetworkDown, _safe_name, check_free_space, claim_path, http_open,
+                    is_network_error, release_path)
 
 MAX_SEGMENT = 256 * 1024 * 1024     # garde-fou mémoire : un « segment » plus gros est suspect
 
@@ -154,6 +155,8 @@ class HlsDownload:
         self._runner = None
         self._keys = {}
         self._probed = False
+        self._waiting = None
+        self._user_paused = False
 
     # -------------------------------------------------------- interface commune
     @property
@@ -210,10 +213,13 @@ class HlsDownload:
         self._stop.clear()
         self._fatal = None
         self.error = None
+        self._waiting = None
+        self._user_paused = False
         self._runner = threading.Thread(target=self._run, daemon=True)
         self._runner.start()
 
     def pause(self):
+        self._user_paused = True
         self._stop.set()
 
     def wait(self):
@@ -235,7 +241,7 @@ class HlsDownload:
         if r.get("status") == COMPLETED and d.path and os.path.exists(d.path):
             d.status = COMPLETED
         else:
-            d.status = ERROR if r.get("status") == ERROR else PAUSED
+            d.status = ERROR if r.get("status") == ERROR else WAITING if r.get("status") == WAITING else PAUSED
         return d
 
     def cleanup_files(self, delete_final=False):
@@ -324,6 +330,8 @@ class HlsDownload:
             self._run_workers()
             if self._fatal:
                 raise RuntimeError(self._fatal)
+            if self._waiting:
+                raise NetworkDown(self._waiting)
             if len(self._done) == self._count():
                 self._assemble()
                 self.status = COMPLETED
@@ -332,7 +340,10 @@ class HlsDownload:
         except ProtectedContent as e:
             self.error, self.status = str(e), ERROR
         except Exception as e:  # noqa: BLE001
-            self.error, self.status = str(e), ERROR
+            if is_network_error(e) and not self._user_paused:
+                self.error, self.status = f"en attente du réseau ({e})", WAITING   # reprise automatique
+            else:
+                self.error, self.status = str(e), ERROR
         finally:
             self.speed, self.active = 0.0, 0
             self._probed = False           # au prochain départ, on relit la playlist
@@ -421,6 +432,8 @@ class HlsDownload:
                 tmp = self._seg_file(track, i) + ".tmp"
                 with open(tmp, "wb") as f:
                     f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())          # un segment « fini » doit vraiment être sur le disque
                 os.replace(tmp, self._seg_file(track, i))
                 with self._lock:
                     self._done[(track, i)] = len(data)
@@ -439,6 +452,10 @@ class HlsDownload:
                 why = f"HTTP {e.code}"
             except (OSError, ValueError) as e:
                 why = str(e)
+                if is_network_error(e) and retries + 1 > NET_RETRIES:
+                    self._waiting = why               # coupure durable : attente du réseau
+                    self._stop.set()
+                    return
             retries += 1
             if retries > MAX_RETRIES:
                 self._fatal = f"segment {i + 1} : abandon après {MAX_RETRIES} essais ({why})"

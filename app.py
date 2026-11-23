@@ -8,6 +8,7 @@ de la classe Api ci-dessous via window.pywebview.api.<méthode>().
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,19 +21,25 @@ import uuid
 import webview
 
 import bridge
+import updater
+from dash import DashDownload
 from hls import HlsDownload
 
-from engine import (COMPLETED, DOWNLOADING, ERROR, PAUSED, PROBING, QUEUED,
-                    Download)
+from engine import (COMPLETED, DOWNLOADING, ERROR, PAUSED, PROBING, QUEUED, WAITING,
+                    Download, host_reachable)
 
 APP_NAME = "Varika Download"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 STATUS_KEYS = {QUEUED: "queued", PROBING: "probing", DOWNLOADING: "downloading",
-               PAUSED: "paused", COMPLETED: "completed", ERROR: "error", "assemblage": "assembling"}
+               PAUSED: "paused", COMPLETED: "completed", ERROR: "error", "assemblage": "assembling",
+               WAITING: "waiting"}
+NET_CHECK_EVERY = 8          # secondes entre deux vérifications du réseau
+MAX_WAIT_CYCLES = 8          # reprises sans aucun progrès avant d'abandonner
 
 
 def _restore(rec):
-    return (HlsDownload if rec.get("kind") == "hls" else Download).from_record(rec)
+    cls = {"hls": HlsDownload, "dash": DashDownload}.get(rec.get("kind"), Download)
+    return cls.from_record(rec)
 
 
 def _is_hls(url):
@@ -110,15 +117,17 @@ class Api:
         self._items = {}          # id -> {"d": Download, "added": timestamp}
         self._order = []
         self._settings = {"dest": default_downloads(), "connections": 8, "max_parallel": 3,
-                          "show_on_add": True}
+                          "show_on_add": True, "auto_update": True}
         self._file = os.path.join(data_dir(), "downloads.json")
         self._ext_dir = None      # dossier permanent de l'extension (voir main)
         self._server_ok = False
         self._save_lock = threading.Lock()   # A22 : une seule écriture du fichier à la fois
+        self._updater = updater.Updater(APP_VERSION, os.path.join(data_dir(), "updates"))
         self._closing = False                # A43 : plus de nouveaux départs pendant la fermeture
         self._load()
         self._dirty = False
         threading.Thread(target=self._loop, daemon=True).start()
+        threading.Thread(target=self._net_watch, daemon=True).start()
 
     # ------------------------------------------------------ persistance
     def _load(self):
@@ -139,6 +148,8 @@ class Api:
                 continue
             if i in self._items:
                 continue
+            if rec.get("autostart") and d.status in (PAUSED, WAITING):
+                d.status = QUEUED                 # il tournait à la fermeture : il reprend tout seul
             self._items[i] = {"d": d, "added": rec.get("added", time.time())}
             self._order.append(i)
 
@@ -148,7 +159,7 @@ class Api:
             for i in self._order:
                 it = self._items[i]
                 rec = it["d"].to_record()
-                rec.update(id=i, added=it["added"])
+                rec.update(id=i, added=it["added"], autostart=bool(it.get("autostart")))
                 items.append(rec)
             data = {"settings": self._settings, "items": items}
         with self._save_lock:
@@ -186,10 +197,34 @@ class Api:
                     pass
                 self._dirty, last_save = False, time.time()
 
+    def _net_watch(self):
+        """Coupure d'Internet : dès que le serveur répond de nouveau, le téléchargement reprend tout seul."""
+        progress = {}
+        while not self._closing:
+            time.sleep(NET_CHECK_EVERY)
+            with self._lock:
+                waiting = [(i, it["d"]) for i, it in self._items.items()
+                           if it["d"].status == WAITING and not it["d"].is_running]
+            for i, d in waiting:
+                if not host_reachable(getattr(d, "source_url", None) or d.url):
+                    continue
+                got = d.downloaded or 0
+                last, cycles = progress.get(i, (-1, 0))
+                cycles = 0 if got > last else cycles + 1
+                progress[i] = (got, cycles)
+                if cycles >= MAX_WAIT_CYCLES:     # le serveur répond mais coupe à chaque fois : on abandonne
+                    d.status = ERROR
+                    d.error = "le serveur interrompt la connexion à chaque essai : réessayez plus tard"
+                    continue
+                d.status = QUEUED
+                self._dirty = True
+
     def _shutdown(self):
         self._closing = True
         with self._lock:
             running = [it["d"] for it in self._items.values() if it["d"].is_running]
+            for it in self._items.values():          # à relancer au prochain démarrage
+                it["autostart"] = it["d"].is_running or it["d"].status in (QUEUED, WAITING)
         for d in running:
             d.pause()
         for d in running:
@@ -209,7 +244,7 @@ class Api:
                 total_speed += d.speed
                 segs = []
                 if d.status != COMPLETED:
-                    if d.kind == "hls":
+                    if hasattr(d, "ui_segments"):
                         segs = d.ui_segments()
                     elif d.total:
                         for s, e, p in d.segment_map()[:256]:
@@ -224,17 +259,21 @@ class Api:
                     "kind": d.kind, "variant": getattr(d, "variant", None), "note": getattr(d, "note", None),
                 })
             return {"items": out, "totalSpeed": total_speed, "settings": self._settings,
-                    "version": APP_VERSION, "extension": self.extension_info()}
+                    "version": APP_VERSION, "extension": self.extension_info(),
+                    "update": dict(self._updater.state)}
 
     def add(self, url, connections=None):
         return self._add(url, connections)
 
-    def _add(self, url, connections=None, filename=None, headers=None, probe=False, kind=None, quality=None):
+    def _add(self, url, connections=None, filename=None, headers=None, probe=False, kind=None, quality=None,
+             audio_url=None):
         url = (url or "").strip()
         if not url.lower().startswith(("http://", "https://")):
             return {"ok": False, "error": "Le lien doit commencer par http:// ou https://"}
         n = int(connections or self._settings["connections"])
-        if kind == "hls" or _is_hls(url):
+        if kind == "dash" and audio_url:
+            d = DashDownload(url, audio_url, self._settings["dest"], n, filename=filename or None, headers=headers)
+        elif kind == "hls" or _is_hls(url):
             d = HlsDownload(url, self._settings["dest"], n, filename=filename or None, headers=headers, quality=quality)
         else:
             d = Download(url, self._settings["dest"], n, filename=filename or None, headers=headers)
@@ -264,13 +303,17 @@ class Api:
             if v and "\n" not in v and "\r" not in v:
                 headers[name] = v[:16000]
         fname = os.path.basename(str(data.get("filename") or "").replace("\\", "/")) or None
-        kind = "hls" if data.get("kind") == "hls" else None
+        kind = data.get("kind") if data.get("kind") in ("hls", "dash") else None
+        audio_url = str(data.get("audio") or "")
+        if not audio_url.lower().startswith(("http://", "https://")):
+            audio_url, kind = None, (None if kind == "dash" else kind)
         title = str(data.get("title") or "").strip()
         if not fname and title and (kind or data.get("kind") == "video"):
+            title = re.sub(r"^\(\d+\+?\)\s*", "", title)          # « (19) Facebook » : on retire le compteur de notifications
             fname = title[:120] + (".mp4" if kind else os.path.splitext(urllib.parse.urlparse(url).path)[1] or ".mp4")
         quality = data.get("quality")
         quality = int(quality) if str(quality or "").isdigit() else None
-        res = self._add(url, None, fname, headers, probe=True, kind=kind, quality=quality)
+        res = self._add(url, None, fname, headers, probe=True, kind=kind, quality=quality, audio_url=audio_url)
         if res.get("ok") and self._settings.get("show_on_add", True):
             self._bring_to_front()
         return res
@@ -333,13 +376,13 @@ class Api:
         if d:
             if d.is_running:
                 d.pause()
-            elif d.status == QUEUED:
+            elif d.status in (QUEUED, WAITING):
                 d.status = PAUSED
             self._dirty = True
 
     def resume(self, i):
         d = self._get(i)
-        if d and not d.is_running and d.status in (PAUSED, ERROR):
+        if d and not d.is_running and d.status in (PAUSED, ERROR, WAITING):
             d.status = QUEUED            # la file d'attente le démarrera
             self._dirty = True
 
@@ -420,8 +463,20 @@ class Api:
                 self._settings["max_parallel"] = max(1, min(10, int(s["max_parallel"])))
             if "show_on_add" in s:
                 self._settings["show_on_add"] = bool(s["show_on_add"])
+            if "auto_update" in s:
+                self._settings["auto_update"] = bool(s["auto_update"])
             self._dirty = True
         return self._settings
+
+    # ------------------------------------------------------ mises à jour
+    def check_update(self):
+        return self._updater.check()
+
+    def install_update(self):
+        def quit_app():
+            if self._window:
+                self._window.destroy()          # déclenche _shutdown : téléchargements mis en pause et sauvegardés
+        return self._updater.install(quit_app)
 
     def read_clipboard(self):
         try:
@@ -447,6 +502,7 @@ def main():
     api._ext_dir = bridge.install_extension_files(resource("extension"), data_dir())
     api._server_ok = bridge.start_server(api, token) is not None
     bridge.register_protocol()
+    api._updater.start_background(lambda: api._settings.get("auto_update", True))
     # A41 : le sondage d'un lien peut prendre du temps ; la fenêtre ne doit pas l'attendre
     threading.Thread(target=lambda: [api._add_from_browser(link) for link in links], daemon=True).start()
     window = webview.create_window(

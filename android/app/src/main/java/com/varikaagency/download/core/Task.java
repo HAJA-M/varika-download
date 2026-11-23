@@ -10,7 +10,9 @@ import java.util.Map;
 public abstract class Task {
     // Clés de statut, identiques à celles qu'attend l'interface (ui/index.html)
     public static final String QUEUED = "queued", PROBING = "probing", DOWNLOADING = "downloading",
-            PAUSED = "paused", COMPLETED = "completed", ERROR = "error", ASSEMBLING = "assembling";
+            PAUSED = "paused", COMPLETED = "completed", ERROR = "error", ASSEMBLING = "assembling",
+            WAITING = "waiting";       // réseau coupé (ou Wi-Fi exigé) : reprise automatique
+    public static int netRetries = 4;      // essais rapides avant « en attente du réseau »
 
     public final String id;
     public String url;
@@ -29,6 +31,11 @@ public abstract class Task {
     public volatile int active;
     public long added = System.currentTimeMillis() / 1000;
     public String publishedUri;       // Android : adresse du fichier publié dans « Téléchargements »
+    /** null = réglage général ; true = seulement en Wi-Fi ; false = aussi sur données mobiles. */
+    public Boolean wifiOnly;
+    public volatile boolean userPaused;
+    /** Raison de l'attente affichée à l'utilisateur. */
+    public volatile String waitReason;
 
     protected volatile boolean stop;
     protected volatile String fatal;
@@ -69,6 +76,8 @@ public abstract class Task {
         stop = false;
         fatal = null;
         error = null;
+        userPaused = false;
+        waitReason = null;
         runner = new Thread(new Runnable() {
             @Override public void run() { Task.this.run(); }
         }, "varika-" + id);
@@ -76,7 +85,27 @@ public abstract class Task {
         runner.start();
     }
 
-    public void pause() { stop = true; }
+    public void pause() {
+        userPaused = true;
+        stop = true;
+    }
+
+    /** Arrêt décidé par le gestionnaire (réseau perdu, Wi-Fi exigé) : pas une pause de l'utilisateur. */
+    public void suspend(String reason) {
+        waitReason = reason;
+        stop = true;
+    }
+
+    /** Termine le déroulement après une exception : coupure réseau -> attente, sinon erreur. */
+    protected void failed(Exception e) {
+        if (!userPaused && (Net.isNetworkError(e) || waitReason != null)) {
+            status = WAITING;
+            error = waitReason != null ? waitReason : "en attente du réseau (" + Net.message(e) + ")";
+        } else {
+            status = ERROR;
+            error = Net.message(e);
+        }
+    }
 
     public void await() {
         Thread t = runner;
@@ -132,6 +161,7 @@ public abstract class Task {
         r.put("error", error);
         r.put("added", added);
         r.put("uri", publishedUri);
+        r.put("wifi_only", wifiOnly);
         Map<String, Object> h = new LinkedHashMap<String, Object>();
         for (Map.Entry<String, String> e : headers.entrySet()) {
             if (!e.getKey().equalsIgnoreCase("Cookie")) h.put(e.getKey(), e.getValue());  // pas de cookies sur le disque
@@ -149,12 +179,17 @@ public abstract class Task {
         error = Json.str(r, "error");
         added = Json.num(r, "added", added);
         publishedUri = Json.str(r, "uri");
+        wifiOnly = r.get("wifi_only") instanceof Boolean ? (Boolean) r.get("wifi_only") : null;
         for (Map.Entry<String, Object> e : Json.obj(r.get("headers")).entrySet()) {
             if (e.getValue() != null) headers.put(e.getKey(), e.getValue().toString());
         }
         String st = Json.str(r, "status");
         if (COMPLETED.equals(st) && (publishedUri != null || (path != null && path.exists()))) status = COMPLETED;
-        else status = ERROR.equals(st) ? ERROR : PAUSED;
+        else if (ERROR.equals(st)) status = ERROR;
+        // tournait (ou attendait le réseau) quand l'application a été fermée : reprend tout seul
+        else if (DOWNLOADING.equals(st) || QUEUED.equals(st) || PROBING.equals(st) || WAITING.equals(st)
+                || ASSEMBLING.equals(st)) status = QUEUED;
+        else status = PAUSED;
     }
 
     public static Task fromRecord(Map<String, Object> r) {
@@ -162,7 +197,10 @@ public abstract class Task {
         String url = Json.str(r, "url");
         File dest = new File(Json.str(r, "dest_dir"));
         int conns = (int) Json.num(r, "connections", 8);
-        Task t = "hls".equals(Json.str(r, "kind")) ? new HlsTask(id, url, dest, conns, HlsTask.qualityOf(r)) : new FileTask(id, url, dest, conns);
+        String kind = Json.str(r, "kind");
+        Task t = "hls".equals(kind) ? new HlsTask(id, url, dest, conns, HlsTask.qualityOf(r))
+                : "dash".equals(kind) ? new DashTask(id, url, Json.str(r, "audio_url"), dest, conns)
+                : new FileTask(id, url, dest, conns);
         t.restore(r);
         return t;
     }
@@ -194,6 +232,7 @@ public abstract class Task {
         v.put("kind", kind());
         v.put("variant", variant());
         v.put("note", note);
+        v.put("wifi_only", wifiOnly);
         return v;
     }
 }

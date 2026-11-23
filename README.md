@@ -9,13 +9,42 @@ Application de bureau Windows : moteur Python, interface HTML/CSS moderne affich
 2. Double-cliquer sur **`build_windows.bat`**.
 3. L'exécutable est créé dans **`dist\VarikaDownload.exe`** (un seul fichier, environ 15 Mo, l'icône est incluse).
 
-### Option 2 : installateur « Setup-VarikaDownload-1.0.0.exe »
-Après l'option 1, installer [Inno Setup 6](https://jrsoftware.org/isdl.php), ouvrir `installer.iss` puis cliquer sur **Compiler**. Le fichier `dist\Setup-VarikaDownload-1.0.0.exe` installe Varika Download avec un raccourci dans le menu Démarrer, une icône sur le bureau (en option) et un désinstalleur.
+### Option 2 : installateur « Setup-VarikaDownload-1.4.0.exe »
+Après l'option 1, installer [Inno Setup 6](https://jrsoftware.org/isdl.php), ouvrir `installer.iss` puis cliquer sur **Compiler**. Le fichier `dist\Setup-VarikaDownload-1.4.0.exe` installe Varika Download avec un raccourci dans le menu Démarrer, une icône sur le bureau (en option) et un désinstalleur.
 
 ### Option 3 : compilation automatique par GitHub
-Pousse ce dossier sur un dépôt GitHub. Dans l'onglet **Actions**, ouvre le workflow **Build Windows** et clique sur **Run workflow** (il se lance aussi à chaque tag `v*`). Les fichiers `Varika Download.exe` et `Setup-VarikaDownload-1.0.0.exe` se téléchargent ensuite dans **Artifacts**.
+Voir « Intégration continue et mises à jour » ci-dessous : un tag `v1.4.0` produit tout (exe, installateur, APK, extension) et le publie.
 
 > L'exe n'est pas signé numériquement : au premier lancement, Windows SmartScreen peut afficher « Windows a protégé votre ordinateur ». Clique sur **Informations complémentaires → Exécuter quand même**. Pour supprimer cet avertissement, il faut un certificat de signature de code.
+
+## Intégration continue et mises à jour automatiques
+
+**Deux workflows GitHub Actions** (`.github/workflows/`) :
+
+| Workflow | Quand | Ce qu'il fait |
+|---|---|---|
+| **CI** | chaque `push` et pull request | tous les tests : moteur PC, coupures réseau (fichier de 1 Go), HLS, vérification des mises à jour, moteur Android sur la JVM, extension et détection vidéo dans Chromium, cohérence des numéros de version |
+| **Release** | un tag `v*` (ou *Run workflow* à la main) | relance les tests, compile `VarikaDownload.exe`, `Setup-VarikaDownload-x.y.z.exe`, `VarikaDownload-x.y.z.apk` et l'extension `.zip`, calcule `SHA256SUMS.txt` puis crée la **Release GitHub** |
+
+**Publier une nouvelle version** (le numéro est pris dans le tag et écrit partout automatiquement) :
+```
+git tag v1.4.1
+git push origin v1.4.1
+```
+Pour changer la version à la main : `python scripts/set_version.py 1.4.1` (et `--check` pour vérifier).
+
+**Comment les logiciels installés se mettent à jour**
+- Windows et Android interrogent `https://api.github.com/repos/HAJA-M/varika-download-releases/releases/latest` à l'ouverture (désactivable dans Paramètres), puis affichent un bandeau « Mise à jour x.y.z ».
+- Le fichier est téléchargé puis comparé à `SHA256SUMS.txt` : **un seul octet différent, ou une Release sans empreintes, et la mise à jour est refusée**.
+- Windows : l'installateur se lance en mode silencieux, ferme Varika Download et le relance. La version portable se remplace elle-même.
+- Android : l'installeur système s'ouvre et l'utilisateur confirme (Android l'exige). La première fois, il faut autoriser « Installer des applications inconnues » pour Varika Download.
+
+**À configurer une fois sur GitHub**
+1. Crée un dépôt **public** `HAJA-M/varika-download-releases` (il peut rester vide) : c'est là que les logiciels installés lisent les mises à jour, même si le code source reste privé. Pour utiliser un autre dépôt : variable GitHub `UPDATE_REPO`, et `UPDATE_REPO` / `REPO` dans `updater.py` et `Updater.java` (sous Windows, la variable d'environnement `VARIKA_UPDATE_REPO` suffit).
+2. Dans le dépôt du code : *Settings > Secrets and variables > Actions* → secret **`RELEASES_TOKEN`** (jeton personnel *fine-grained* avec « Contents : Read and write » sur le dépôt public). Sans ce secret, la Release est créée seulement dans le dépôt du code.
+3. Si ton dépôt de code est lui-même public, tu peux simplement mettre son nom dans `UPDATE_REPO` et ignorer l'étape 2.
+
+**Signature de l'APK** : Android n'installe une mise à jour que si elle est signée avec la **même clé**. Le dépôt contient une clé de test (`android/keystore/varika-test.jks`) utilisée par défaut, pour que toutes les compilations CI s'installent par-dessus les précédentes. Pour le Play Store ou une diffusion large, crée ta propre clé et ajoute les secrets `VARIKA_KEYSTORE_B64`, `VARIKA_KEYSTORE_PASSWORD`, `VARIKA_KEY_ALIAS` et `VARIKA_KEY_PASSWORD`. Attention : passer de la clé de test à ta clé oblige à désinstaller une fois l'ancienne application.
 
 ## Extension navigateur (Chrome, Edge, Opera, Brave, Vivaldi)
 Comme avec IDM, les fichiers cliqués dans le navigateur partent directement dans Varika Download.
@@ -59,10 +88,18 @@ Diagnostic : dans `chrome://extensions`, clique sur « service worker » sous Va
 La même interface que sur Windows, avec un moteur réécrit en Java, sans aucune bibliothèque externe.
 
 **Obtenir l'APK**
-- **GitHub Actions** : workflow **Build Android**, bouton **Run workflow**. L'APK `VarikaDownload-1.3.0-test.apk` se télécharge dans *Artifacts*. Pour produire un APK de production signé, ajoute dans *Settings > Secrets* les secrets `VARIKA_KEYSTORE_B64` (ton fichier .jks encodé en base64), `VARIKA_KEYSTORE_PASSWORD`, `VARIKA_KEY_ALIAS` et `VARIKA_KEY_PASSWORD`.
+- **GitHub Actions** : workflow **Release**, bouton **Run workflow** (ou un tag `v*`). L'APK `VarikaDownload-1.4.0.apk` se télécharge dans *Artifacts* ou dans la Release. Pour la signature, voir plus haut.
 - **Android Studio** : *Open* sur le dossier `android/`, accepte la création du Gradle wrapper, puis *Build > Build APK(s)*.
 
 **Installation sur le téléphone** : Android 10 ou plus récent. Ouvre l'APK et autorise « Installer des applications inconnues » pour le gestionnaire de fichiers ou le navigateur utilisé.
+
+**Pensé pour les très gros fichiers (5 Go et plus)**
+- Écriture directe dans **Téléchargements/Varika Download** : pas de copie finale, donc pas besoin de deux fois l'espace.
+- **Coupure d'Internet** : le téléchargement passe en « Attente réseau » au lieu d'échouer, puis **reprend seul** dès que la connexion revient, à l'octet près (vérifié avec un fichier de 5 Go coupé à 52 %).
+- **Wi-Fi uniquement** (option) : sur les données mobiles, les gros fichiers attendent le Wi-Fi. Un avertissement s'affiche avant de lancer un gros fichier en données mobiles, avec un choix fichier par fichier.
+- Le service garde le processeur et le Wi-Fi éveillés pendant le téléchargement, même écran éteint. Pour les plus gros fichiers, autorise « Batterie : sans restriction » (bouton dans Paramètres).
+- Si Android ferme l'application ou si le téléphone redémarre, les téléchargements reprennent à la réouverture.
+- L'état est écrit sur le disque toutes les 3 s, après synchronisation du fichier : une coupure brutale fait perdre au plus quelques secondes.
 
 **Fonctions**
 - Coller un lien, ou bien **Partager → Varika Download** depuis Chrome, WhatsApp, Telegram… Si le lien mène à une page web plutôt qu'à un fichier, la page s'ouvre dans le navigateur vidéo.

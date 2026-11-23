@@ -19,8 +19,43 @@ import java.io.File;
 public class VarikaApp extends Application {
     public static final String CH_PROGRESS = "progress", CH_DONE = "done";
     private static Manager manager;
+    /** true : les fichiers sont écrits directement dans Téléchargements/Varika Download (pas de copie à la fin). */
+    static boolean directStorage;
 
     public static Manager manager() { return manager; }
+
+    /**
+     * Gros fichiers : écrire directement à l'emplacement final évite de recopier 5 Go à la fin
+     * (et d'avoir besoin de deux fois la place). On vérifie que c'est possible sur ce téléphone ;
+     * sinon, repli sur le dossier de l'application puis publication à la fin.
+     */
+    static File pickStorage(android.content.Context c) {
+        File pub = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Varika Download");
+        try {
+            if (pub.mkdirs() || pub.isDirectory()) {
+                File probe = new File(pub, ".varika-test-" + System.nanoTime());
+                java.io.RandomAccessFile raf = new java.io.RandomAccessFile(probe, "rw");
+                try {
+                    raf.setLength(1 << 20);                // écriture à une position arbitraire, comme le moteur
+                    raf.seek(1 << 19);
+                    raf.write(42);
+                } finally {
+                    raf.close();
+                }
+                boolean ok = probe.length() == (1 << 20);
+                if (!probe.delete()) probe.deleteOnExit();
+                if (ok) {
+                    directStorage = true;
+                    return pub;
+                }
+            }
+        } catch (Exception ignored) {
+            // pas autorisé sur ce téléphone : repli
+        }
+        directStorage = false;
+        File work = c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        return work != null ? work : new File(c.getFilesDir(), "downloads");
+    }
 
     @Override public void onCreate() {
         super.onCreate();
@@ -30,12 +65,11 @@ public class VarikaApp extends Application {
         } catch (RuntimeException ignored) {
             // valeur par défaut
         }
-        // Dossier de travail privé (écriture à n'importe quelle position, nécessaire au multi-connexions).
-        // Une fois terminé, le fichier est publié dans Téléchargements/Varika Download (voir Publisher).
-        File work = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-        if (work == null) work = new File(getFilesDir(), "downloads");
+        File work = pickStorage(this);
         HlsTask.remuxer = new MediaRemuxer();
         manager = new Manager(new File(getFilesDir(), "downloads.json"), work);
+        manager.settings.put("dest", work.getPath());          // l'emplacement peut changer (permission accordée…)
+        NetworkMonitor.start(this, manager);
         manager.setListener(new Manager.Listener() {
             @Override public void onCompleted(Task t) {
                 Publisher.publish(VarikaApp.this, t);

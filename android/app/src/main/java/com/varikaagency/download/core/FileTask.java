@@ -41,6 +41,9 @@ public class FileTask extends Task {
     private String etag;
     private volatile long streamBytes;
     private int notRanged;
+    /** Un seul canal d'écriture partagé par toutes les connexions (écritures positionnelles). */
+    private volatile java.nio.channels.FileChannel channel;
+    private volatile String waitingWhy;
 
     public FileTask(String id, String url, File destDir, int connections) {
         super(id, url, destDir, connections);
@@ -94,7 +97,9 @@ public class FileTask extends Task {
                 refresh();
             }
             status = DOWNLOADING;
+            waitingWhy = null;
             boolean complete = resumable ? runSegmented() : runSingle();
+            if (waitingWhy != null) throw new java.net.SocketException(waitingWhy);
             if (complete) {
                 finish();
             } else {
@@ -103,8 +108,8 @@ public class FileTask extends Task {
                 probed = false;
             }
         } catch (Exception e) {
-            error = Net.message(e);
-            status = ERROR;
+            failed(e);                         // coupure réseau -> « en attente », reprise automatique
+            probed = false;
             try {
                 saveState();
             } catch (Exception ignored) {
@@ -113,7 +118,7 @@ public class FileTask extends Task {
         } finally {
             speed = 0;
             active = 0;
-            if (PAUSED.equals(status) || ERROR.equals(status)) Net.release(path);
+            if (PAUSED.equals(status) || ERROR.equals(status) || WAITING.equals(status)) Net.release(path);
         }
     }
 
@@ -160,6 +165,12 @@ public class FileTask extends Task {
                 resumable = false;
             }
             String name = forcedName != null ? forcedName : Net.filenameFromHeaders(c.getHeaderField("Content-Disposition"), url);
+            // Une page web n'est pas un fichier : on refuse plutôt que d'enregistrer du HTML
+            String ctype = String.valueOf(c.getContentType()).toLowerCase(java.util.Locale.ROOT);
+            String cd = String.valueOf(c.getHeaderField("Content-Disposition")).toLowerCase(java.util.Locale.ROOT);
+            if (ctype.startsWith("text/html") && !cd.contains("attachment") && forcedName == null) {
+                throw new IOException("ce lien mène à une page web, pas à un fichier : ouvrez-la dans le navigateur vidéo");
+            }
             filename = Net.safeName(name);
             probed = true;
         } finally {
@@ -201,7 +212,7 @@ public class FileTask extends Task {
     }
 
     private void prepare() throws IOException {
-        if (!destDir.isDirectory() && !destDir.mkdirs()) throw new IOException("dossier inaccessible : " + destDir);
+        if (!destDir.mkdirs() && !destDir.isDirectory()) throw new IOException("dossier inaccessible : " + destDir);
         File wanted = new File(destDir, filename);
         if (resumable && loadState(wanted)) return;
         Net.checkFreeSpace(destDir, total);
@@ -271,6 +282,16 @@ public class FileTask extends Task {
 
     private void saveState() throws IOException {
         if (!resumable || path == null) return;
+        // Les octets doivent être réellement écrits sur le stockage AVANT d'enregistrer qu'ils sont reçus :
+        // sinon une batterie vide laisserait des trous dans un fichier « terminé ».
+        java.nio.channels.FileChannel ch = channel;
+        if (ch != null && ch.isOpen()) {
+            try {
+                ch.force(false);
+            } catch (IOException ignored) {
+                // la sauvegarde suivante réessaiera
+            }
+        }
         Map<String, Object> st = new LinkedHashMap<String, Object>();
         st.put("url", url);
         st.put("total", total);
@@ -290,6 +311,22 @@ public class FileTask extends Task {
 
     // ------------------------------------------------------------------ plusieurs connexions
     private boolean runSegmented() throws Exception {
+        RandomAccessFile raf = new RandomAccessFile(part(), "rw");
+        channel = raf.getChannel();
+        try {
+            return runWorkers();
+        } finally {
+            try {
+                channel.force(false);
+            } catch (IOException ignored) {
+                // rien
+            }
+            channel = null;
+            raf.close();
+        }
+    }
+
+    private boolean runWorkers() throws Exception {
         List<Thread> workers = new ArrayList<Thread>();
         for (int i = 0; i < connections; i++) {
             Thread t = new Thread(new Runnable() {
@@ -307,7 +344,7 @@ public class FileTask extends Task {
             speed = speed == 0 ? inst : 0.7 * speed + 0.3 * inst;
             lastT = now;
             lastB = b;
-            if (now - lastSave > 2000) {
+            if (now - lastSave > 3000) {
                 saveState();
                 lastSave = now;
             }
@@ -365,7 +402,6 @@ public class FileTask extends Task {
         byte[] buf = new byte[CHUNK];
         while (!stop && !seg.done()) {
             HttpURLConnection c = null;
-            RandomAccessFile f = null;
             try {
                 long from, to;
                 synchronized (segments) { from = seg.pos; to = seg.end; }
@@ -394,7 +430,7 @@ public class FileTask extends Task {
                     if (Long.parseLong(m.group(1)) != from) throw new IOException("le serveur a renvoyé une autre plage");
                 }
                 InputStream in = c.getInputStream();
-                f = new RandomAccessFile(part(), "rw");
+                java.nio.channels.FileChannel ch = channel;
                 synchronized (this) { active++; }
                 try {
                     while (!stop) {
@@ -410,8 +446,9 @@ public class FileTask extends Task {
                             seg.pos += n;
                         }
                         try {
-                            f.seek(off);
-                            f.write(buf, 0, n);
+                            java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(buf, 0, n);
+                            long p = off;
+                            while (bb.hasRemaining()) p += ch.write(bb, p);
                         } catch (IOException e) {
                             synchronized (segments) { seg.pos = off; }   // annule la réservation
                             if (String.valueOf(e.getMessage()).contains("ENOSPC") || String.valueOf(e.getMessage()).toLowerCase().contains("no space")) {
@@ -427,13 +464,17 @@ public class FileTask extends Task {
                 }
             } catch (IOException | RuntimeException e) {
                 retries++;
+                if (Net.isNetworkError(e) && retries > netRetries) {
+                    waitingWhy = Net.message(e);           // coupure durable : on attendra le réseau
+                    stop = true;
+                    return;
+                }
                 if (retries > MAX_RETRIES) {
                     fail("abandon après " + MAX_RETRIES + " essais : " + Net.message(e));
                     return;
                 }
                 sleepUnlessStopped(Math.min(30000, 1000L << retries));
             } finally {
-                if (f != null) try { f.close(); } catch (IOException ignored) { /* rien */ }
                 if (c != null) c.disconnect();
             }
         }
